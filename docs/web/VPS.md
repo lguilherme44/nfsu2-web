@@ -373,7 +373,8 @@ the game folder, one folder per language, whose files a game in that language re
    The dubs need RAR 7's `unrar` (`unrar x`): libarchive (`bsdtar`, Windows' `tar`) cannot read them.
 2. Download the Portuguese translation ("Tradução PT-BR, V1.1 (TraduMix e MixMods)", from
    [joao13traducoes.com](https://joao13traducoes.com/2018/08/pc-need-for-speed-underground-2-traduzido-e-dublado-varios-autores/))
-   and extract it into another empty folder (`unrar x -p'João13'`).
+   and extract it into another empty folder (`unrar x -p'João13'`). To include the Brazilian Portuguese dubbing by
+   ZANIT, also extract its archive into a folder (`speech/UG2_Speech.big`, `MOVIES/*.vp6`).
 3. Download the Polish translation (PLProjekt's v1.1, from
    [portal24h.pl](https://www.portal24h.pl/spolszczenia-gier/spolszczenia-gier/mo/Need-For-Speed-Underground-2-(plprojekt)-1456/))
    and extract it into a third empty folder (`unrar x`). It holds two Windows installers; the tool reads either one's
@@ -381,8 +382,7 @@ the game folder, one folder per language, whose files a game in that language re
 4. Download the English subtitles (`English Subtitles Fixed (v1.0).7z`) and extract it into a fourth empty folder
    (`7z x`; `bsdtar` and Windows' `tar` read it too). The tool reads its Binary script; neither Binary nor the
    Extra Options mod it asks for is needed.
-5. `tools/langpacks.py "<your game folder>" --multi13 "<the mod's folder>" --ptbr "<the translation's folder>"
-   --pl "<the Polish folder>" --subs "<the subtitles' folder>"` builds `LANGPACKS` (1.6 GB) and prints what each
+5. `tools/langpacks.py "<your game folder>" --multi13 "<the mod's folder>" --ptbr "<the translation's folder>" [--ptbr-dub "<the dub's folder>"] --pl "<the Polish folder>" --subs "<the subtitles' folder>"` builds `LANGPACKS` (1.6 GB) and prints what each
    language got: the dubbed voices and movies of French, German, Italian, Spanish, Japanese and Russian, the full
    Chinese, Japanese and Thai text with their fonts, Russian, Portuguese and Polish in English's place (Polish with
    its fonts), the Danish, Dutch and Swedish EA logos, and English's text with the movies' lines whole (0.3 MB).
