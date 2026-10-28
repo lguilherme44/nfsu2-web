@@ -42,7 +42,7 @@ export interface RendererOptions {
   /** most frames the GPU may have queued (default 2) */
   maxInFlight?: number;
   /** false: always draw into the back buffer and composite it (the path before direct
-   *  canvas drawing; A/B and diagnostics) */
+   *  canvas drawing; default in Firefox, which shows half-drawn frames otherwise; A/B and diagnostics) */
   direct?: boolean;
   /** unpack DXT textures on the CPU even when the GPU has texture-compression-bc (tests the
    *  path of PowerVR and Mali phones on a desktop GPU) */
@@ -133,6 +133,9 @@ export function texSplit(unpacked: number, astc: number): string {
   const parts = [unpacked ? `${MB(unpacked)} unpacked from DXT` : '', astc ? `${MB(astc)} DXT1 as ASTC` : ''].filter(Boolean);
   return parts.length ? ` (${parts.join(', ')})` : '';
 }
+/** The game's control block has another layout than this renderer's (gpu_proto.h GW_LAYOUT): the page and the game
+ *  module are of different builds (the page from offline mode's copies, sw.ts, the module from the server) */
+export class OtherBuild extends Error {}
 /** WebGPU calls that failed this many times in a row (one try per frame, a second at 60 fps): the device is gone */
 const LOST_AFTER = 60;
 /** an exception for the log: Safari's stack has no line with the message, Chrome's starts with it */
@@ -188,8 +191,12 @@ export async function attachRenderer(proc: GameProcess, canvas: HTMLCanvasElemen
   const canvasFormat = navigator.gpu.getPreferredCanvasFormat();
   // in the encoder's format the game draws its screen straight into the canvas
   // texture whenever the sizes match (Encoder.encodeFrame), so the canvas texture
-  // takes every use the back buffer has
-  const direct = canvasFormat === 'bgra8unorm' && opts.direct !== false;
+  // takes every use the back buffer has.  Not in Firefox: it shows the canvas texture
+  // while the next frame draws into it (Firefox 158 on a Mac, a race: 3 of 25
+  // screenshots a third to a half black, the rest of the picture half drawn).  From
+  // the back buffer the canvas gets each picture whole, in one copy (0 of 25).
+  const firefox = /\bFirefox\//.test(navigator.userAgent);
+  const direct = canvasFormat === 'bgra8unorm' && (opts.direct ?? !firefox);
   const canvasUsage = GPUTextureUsage.RENDER_ATTACHMENT
     | (direct ? GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST : 0);
   try { ctx.configure({ device, format: canvasFormat, alphaMode: 'opaque', usage: canvasUsage }); }
@@ -206,8 +213,10 @@ export async function attachRenderer(proc: GameProcess, canvas: HTMLCanvasElemen
   const cw = reg.ptr >> 2;
   {
     const u = u32();
-    if (u[cw + C.magic] !== P.GW_MAGIC || u[cw + C.layout] !== P.LAYOUT)
-      giveUp(new Error(`GPU control block mismatch: magic ${u[cw + C.magic].toString(16)} layout ${u[cw + C.layout].toString(16)} (page ${P.LAYOUT.toString(16)})`));
+    if (u[cw + C.magic] !== P.GW_MAGIC || u[cw + C.layout] !== P.LAYOUT) {
+      const what = `GPU control block mismatch: magic ${u[cw + C.magic].toString(16)} layout ${u[cw + C.layout].toString(16)} (page ${P.LAYOUT.toString(16)})`;
+      giveUp(u[cw + C.magic] === P.GW_MAGIC ? new OtherBuild(what) : new Error(what));
+    }
     // one renderer per control block, ever: a second one (or one after a detach) would
     // not have the textures and shaders queued before it.  The game marks the block
     // detached itself when it stopped waiting for a renderer (30 s, gpu_web.c)
@@ -269,7 +278,7 @@ export async function attachRenderer(proc: GameProcess, canvas: HTMLCanvasElemen
   // (wgpu-core's Queue::submit runs Device::maintain), so while a frame waits the pump sends one
   // at once and then every 1-2 ms (Firefox's Atomics.waitAsync times out that finely; its
   // setTimeout takes 4.5 ms).  Chrome reports done work on its own: no pokes there.
-  const poke = opts.poke ?? /\bFirefox\//.test(navigator.userAgent);
+  const poke = opts.poke ?? firefox;
   const pokeCell = new Int32Array(new SharedArrayBuffer(4));
   let waitingSince = 0, poking = false, slotWaits = 0, slotWaitMsMax = 0, pokes = 0;
   let winWaits = 0, winWaitMax = 0, winWaitT = performance.now();
@@ -391,12 +400,15 @@ export async function attachRenderer(proc: GameProcess, canvas: HTMLCanvasElemen
   // (within 2 pixels, as the composite's aspect-fit would have it fill the canvas), the canvas's own size becomes the
   // picture's, the frame draws straight into it (Encoder.encodeFrame's direct path), and CSS stretches the canvas over
   // its box: the browser's compositor scales it as it puts the page on the screen anyway.  Another shape (a picture
-  // pillarboxed in the view) or the full scale: the canvas at the view's size, as before.
+  // pillarboxed in the view) or the full scale: the canvas at the view's size, as before.  The full scale includes an
+  // odd view's picture, a row or column short (the game draws even sizes, gpu_web.c view_wh): stretched by that one
+  // pixel, every row of the picture was resampled, 1-pixel lines grey in the middle of the screen (a player's
+  // 2560x1305 window showed shimmering lines).
   const fitPicture = (b: number) => {
     if (opts.cssScale === false) return;
     const U = u32(), fw = cw + C.frame + b * (P.FRAME_BYTES >> 2), bw = U[fw + F.bbW], bh = U[fw + F.bbH];
     let w = viewW, h = viewH;
-    if (bw > 0 && bh > 0 && (bw < viewW || bh < viewH)) {
+    if (bw > 0 && bh > 0 && (bw < (viewW & ~1) || bh < (viewH & ~1))) {
       const sc = Math.min(viewW / bw, viewH / bh);
       if (Math.abs(Math.round(bw * sc) - viewW) <= 2 && Math.abs(Math.round(bh * sc) - viewH) <= 2) { w = bw; h = bh; }
     }

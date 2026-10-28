@@ -28,13 +28,13 @@
  *       i.e. the timing of the port before this file existed.
  *       Aliases: native = auto, vanilla = game = off, max = uncapped.
  *   NFSU2_HFR_FIX = default | all | none | comma list of
- *       ticks,timer,particles,trail,audio,rtf,rain; a '-' prefix removes one
- *       ("default,-audio").  default = all when the mode's content rate is
- *       above 60, none at 60 (60 stays the vanilla reference), and
- *       ticks,particles,rain at 30 (rtf and audio do nothing there; timer
- *       and trail stay the game's own at that rate).  With auto the set
- *       follows the rate when the window moves to a screen with another
- *       refresh rate.
+ *       ticks,timer,particles,trail,audio,rtf,rain,spinners; a '-' prefix
+ *       removes one ("default,-audio").  default = all when the mode's
+ *       content rate is above 60, none at 60 (60 stays the vanilla
+ *       reference), and ticks,particles,rain,spinners at 30 (rtf and audio
+ *       do nothing there; timer and trail stay the game's own at that
+ *       rate).  With auto the set follows the rate when the window moves to
+ *       a screen with another refresh rate.
  *   NFSU2_LAN_TIMING = pc | exact
  *       pc (default): in a network race (World::IsOnline) ticks and timer
  *       are off, so the clocks run as on an unmodified Windows PC at the
@@ -66,6 +66,8 @@
  *   rtf        RealTimeFrames without the forced minimum of 1 (F5)
  *   rain       Rain::Update on every frame, its per-call steps per time; at
  *              30 twice a frame (F6)
+ *   spinners   the front end's spinners turn by time, not a step per frame
+ *              (F7)
  */
 #include "cpu.h"
 #include <stdio.h>
@@ -81,8 +83,8 @@ void guest_sleep_frame_ns(int64_t ns);  /* win32_ext.c: sleeps with the GIL rele
 int  metal_display_hz(void);            /* metal.m: window's screen max fps, 0 = unknown */
 
 enum { FX_TICKS = 1, FX_TIMER = 2, FX_PARTICLES = 4, FX_TRAIL = 8, FX_AUDIO = 16, FX_RTF = 32,
-       FX_RAIN = 64, FX_ALL = 127 };
-static const char *const g_fx_name[] = { "ticks", "timer", "particles", "trail", "audio", "rtf", "rain" };
+       FX_RAIN = 64, FX_SPIN = 128, FX_ALL = 255, FX_N = 8 };
+static const char *const g_fx_name[FX_N] = { "ticks", "timer", "particles", "trail", "audio", "rtf", "rain", "spinners" };
 
 #define M_OFF      (-1)
 #define M_UNCAPPED (-2)
@@ -187,7 +189,7 @@ static const char *mode_name(void){
 }
 /* the fix set for a mode rate above 60 (or uncapped) when def = FX_ALL,
  * for 60 when def = 0, for 30 when def = FX_30 */
-#define FX_30 (FX_TICKS | FX_PARTICLES | FX_RAIN)
+#define FX_30 (FX_TICKS | FX_PARTICLES | FX_RAIN | FX_SPIN)
 static int parse_fix(int def, int warn){
     const char *e = getenv("NFSU2_HFR_FIX");
     if (!e || !*e) return def;
@@ -199,7 +201,7 @@ static int parse_fix(int def, int warn){
         if (!strcasecmp(t, "all")) bit = FX_ALL;
         else if (!strcasecmp(t, "none")) { f = 0; continue; }
         else if (!strcasecmp(t, "default")) bit = def;
-        else for (int i = 0; i < 7; i++) if (!strcasecmp(t, g_fx_name[i])) bit = 1 << i;
+        else for (int i = 0; i < FX_N; i++) if (!strcasecmp(t, g_fx_name[i])) bit = 1 << i;
         if (!bit && strcasecmp(t, "default")){
             if (warn) fprintf(stderr, "[hfr] NFSU2_HFR_FIX: unknown fix '%s'\n", t);
             continue; }
@@ -209,7 +211,7 @@ static int parse_fix(int def, int warn){
 }
 static void fix_str(int f, char *out, size_t n){
     out[0] = 0;
-    for (int i = 0; i < 7; i++) if (f & (1 << i)){
+    for (int i = 0; i < FX_N; i++) if (f & (1 << i)){
         size_t l = strlen(out); snprintf(out + l, n - l, "%s%s", l ? "," : "", g_fx_name[i]); }
     if (!out[0]) snprintf(out, n, "none");
 }
@@ -689,6 +691,7 @@ static void fixes_follow_rate(void){
     if ((fx ^ g_fix) & FX_TIMER){ g_rt_carry = 0; g_wt_carry = 0; }
     g_fix = fx; first = 0;
 }
+static void fe_spinners(void);          /* F7 */
 void sub_0057ead0(CPU *c){
     resolve();
     if (g_mode == M_OFF){
@@ -730,7 +733,7 @@ void sub_0057ead0(CPU *c){
     frame_close(now, slept, missed);
     frame_open(now, slots);
 
-    if (MR32(A_PLAYBACK)){ sub_0057ead0_orig(c); return; }
+    if (MR32(A_PLAYBACK)){ sub_0057ead0_orig(c); fe_spinners(); return; }
     float cap = MRF32(A_CAP);
     if (g_fix & FX_TICKS){
         g_tick_acc += frame_s * TICK_HZ;
@@ -750,6 +753,7 @@ void sub_0057ead0(CPU *c){
         sub_0057ead0_orig(c);
     }
     MRF32(A_CAP) = cap;
+    fe_spinners();
 }
 
 /* ---- F5 + timer: RealTimer advance 0x57A050 ------------------------------
@@ -1015,6 +1019,23 @@ void hfr_rain_update(CPU *c){
     MRF32(rain + RAIN_STRETCH) = st < 0.f ? stretch : (float)fmin(st / s, 1.0);
     MRF32(A_RAIN_GATE) = gate; MRF32(A_RAIN_EASE) = up; MRF32(A_RAIN_EASE + 4u) = down;
     MRF32(A_RAIN_SLIDE) = slide;
+}
+
+/* ---- F7: the front end's spinners, 0x630DE0 ------------------------------
+ * The front end's car renderer (garage, shops, car lot: GameFlow not 6)
+ * turns its spinners by a constant 0.5 degree a call ([0x7A667C], read only
+ * there; the angle [0x8A44F8]), unless the front end is paused (0x510C30).
+ * It runs twice a rendered frame: 60 degrees a second at 60 fps, twice that
+ * at 120, four times at 240 (a player's report at 240: "way too fast").
+ * The world's spinners turn by time (0x5ECAC0).  After each FrameTimeUpdate
+ * the step becomes 0.5 x 60 x the frame's real dt: 60 degrees a second at
+ * every rate, the game's own 0.5 at 60 (tests/scripts/fe_spinners.txt). */
+#define A_FE_SPIN     0x007a667cu   /* 0.5: degrees a front-end spinner turns a frame */
+static void fe_spinners(void){
+    static float van = -1.f;
+    if (van < 0.f) van = MRF32(A_FE_SPIN);
+    float dt = MRF32(A_REALDT);
+    MRF32(A_FE_SPIN) = (g_fix & FX_SPIN) && dt > 0.f ? (float)(van * 60.0 * dt) : van;
 }
 
 /* ---- exit report -------------------------------------------------------- */

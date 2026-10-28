@@ -10,7 +10,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const js = (await esbuild.build({ entryPoints: [path.join(ROOT, 'web/src/app/devicelog.ts')], bundle: true, format: 'esm', write: false })).outputFiles[0].text;
 const { browserBrief, deviceBrief } = await import('data:text/javascript;base64,' + Buffer.from(js).toString('base64'));
 const djs = (await esbuild.build({ entryPoints: [path.join(ROOT, 'web/src/app/device.ts')], bundle: true, format: 'esm', write: false })).outputFiles[0].text;
-const { phoneScreen } = await import('data:text/javascript;base64,' + Buffer.from(djs).toString('base64'));
+const { phoneScreen, deviceDefaults } = await import('data:text/javascript;base64,' + Buffer.from(djs).toString('base64'));
 
 test('iPhone and iPad are named as such, not macOS (their user agents say "like Mac OS X" or Macintosh)', () => {
   assert.equal(browserBrief('Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1', 5), 'Safari 26 on iOS');
@@ -47,4 +47,22 @@ test('the device line: screen, cores, touch, Home Screen, a 30 Hz display before
     'screen 1512x982 at 2x, 14 cores, 8 GB memory, no touch, browser tab');
   assert.match(deviceBrief({ screenW: 390, screenH: 844, dpr: 3, touchPoints: 5, homeScreen: true, displayHz: 30 }),
     /^screen 390x844 at 3x, touch, Home Screen app, the display at 30 Hz before Play \(Low Power Mode/);
+});
+
+test("free roam's players' cars shown: 16 on a phone, 24 on a tablet, the file's 32 elsewhere", () => {
+  // 2026-10-25, an iPhone's kept log: stopped for memory as 22 friends' cars loaded at once at the new career's start
+  const on = (ua, touchPoints, w, h, coarse) => {
+    Object.defineProperty(globalThis, 'navigator', { value: { userAgent: ua, maxTouchPoints: touchPoints }, configurable: true, writable: true });
+    globalThis.screen = { width: w, height: h };
+    globalThis.matchMedia = () => ({ matches: coarse });
+    return deviceDefaults().roam_max_cars;
+  };
+  const mac = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15';
+  assert.equal(on('Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1', 5, 390, 844, true), '16');
+  assert.equal(on(mac, 5, 390, 844, true), '16');                                  // an iPhone asking for desktop websites
+  assert.equal(on('Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36', 5, 412, 915, true), '16');
+  assert.equal(on(mac, 5, 820, 1180, true), '24');                                 // an iPad
+  assert.equal(on('Mozilla/5.0 (Linux; Android 15; SM-X910) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36', 10, 1848, 2960, true), '24');
+  assert.equal(on(mac, 0, 1512, 982, false), undefined);                           // a Mac
+  assert.equal(on('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36', 10, 1920, 1080, false), undefined);   // a touch laptop
 });

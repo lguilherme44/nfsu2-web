@@ -7,6 +7,7 @@
 // Each module's own handle has detach(); the adapters pass the options the
 // shell owns and pick the counters the detailed overlay shows.
 import { attachRenderer as gpuAttach } from '../gpu/index';
+export { OtherBuild } from '../gpu/index';
 import { attachAudio as audioAttach } from '../audio/index';
 import { attachInput as inputAttach } from '../input/index';
 import { attachNet as netAttach } from '../net/index';

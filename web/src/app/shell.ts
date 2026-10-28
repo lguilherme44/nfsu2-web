@@ -27,13 +27,15 @@ import { LogRing, downloadBlob, stamp } from './logs';
 import { LastGameKeeper, lastGameEnd, lastGameLine, lastGameToOffer, type LastGame } from './lastgame';
 import { browserBrief, deviceBrief } from './devicelog';
 import { canFullscreen, enterFullscreen, exitFullscreen, fromHomeScreen, homeScreenInstead, isFullscreen, keepScreenOn, measureRefresh, settledSize, trackCanvasSize } from './display';
-import { deviceDefaults, markTouch, noPinchZoom, padSeen, phoneScreen, touchFirst } from './device';
+import { deviceDefaults, isPhone, markTouch, noPinchZoom, padSeen, phoneScreen, touchFirst } from './device';
+import { phoneSeed, phoneUpgrade } from './phonegraphics';
 import { markPad, padPress, pageDialog } from './padnav';
 import { controlsSheet, type ControlsSheet } from './controls';
 import { TouchControls } from './touch';
 import { TextField } from './textentry';
 import { PauseHint } from './pausehint';
 import { DriftPanel } from './drift';
+import { PhotoMode } from './photo';
 import type { PadPage } from '../input/gamepad';
 import type { NetQueue, NetRemoved } from '../net';
 import { checkSetting, HOST_FIXED, pageOnly, resolveEnv, settingsUpgrade, TEMPLATE, type Resolved } from './settings';
@@ -42,14 +44,20 @@ import { turnOnAutosave } from './profile';
 import { crewControl, putKey, SettingsPanel, showCrewCounts } from './settings-ui';
 import { askCrews, queueText, roomHash, serverAnswers, watchPlayers, type PlayerCounts } from './players';
 import { crewList, crewsOf, crewsValue, rgbsValue, rgbWords, type Crew } from './crews';
+import { privacy, SCRUB_NOTE } from './privacy';
 import { SavesPanel } from './saves-ui';
 import { saveScreenshot } from './shots';
 import { forgetLink, VaultPanel } from './vault-ui';
+import { Radio, MODES, radioWasOn, type Mode } from '../radio';
+import { canPickMusic, pickMusic } from '../radio-folder';
+import { RadioLink } from './radio-link';
 import { FpsOverlay, FPS_MODES, type FpsMode } from './overlay';
 import { LobbyPanel } from './lobby';
 import { ICON as CHAT_ICON, QuickChat } from './quickchat';
+import { groupsOf, phrasesOf } from './phrases';
 import { GameSession } from './game';
 import { AwayCheck, AWAY_LIMITS, type AwayLimits } from './away';
+import { PlayTime, SMS_AFTER_MS } from './playtime';
 import { pageId } from './page-id';
 import { RenderCheck, RENDER_CHECK_TIMES, type RenderCheckTimes } from './rendercheck';
 import { moviesKept, Predownload } from './predownload';
@@ -61,7 +69,7 @@ type Phase = 'boot' | 'ready' | 'error' | 'waiting' | 'starting' | 'playing' | '
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
 
 // the page address's test aids, once boot knows whether the server is a development server
-const TEST_PARAMS = ['env', 'save', 'fresh', 'reg', 'script', 'artifacts', 'dumpscale', 'away', 'rendercheck'];
+const TEST_PARAMS = ['env', 'save', 'fresh', 'reg', 'script', 'artifacts', 'dumpscale', 'away', 'rendercheck', 'playtime'];
 const addr = new URLSearchParams(location.search);
 let q = new URLSearchParams();
 let SAVE = 'save';
@@ -90,6 +98,7 @@ async function devServer(): Promise<boolean> {
 }
 
 const log = new LogRing(8 << 20);
+log.onLine = s => { privacy.learn(s); };    // the names a downloaded log must not carry (privacy.ts)
 let phase: Phase = 'boot';
 let loaded: Loaded | null = null;
 let displayHz = 60;
@@ -104,6 +113,7 @@ let crewDraft = '';                      // the crew name being typed in the men
 let popCounts = new Map<number, number>();   // how many are in free roam in each of those crews, by hash (askPopCounts)
 let popAsk = 0;                          // the popup's questions so far: only the newest one's answer shows
 let away: AwayCheck | null = null;
+let playTime: PlayTime | null = null;
 let renderCheck: RenderCheck | null = null;
 let lastExit: { code: number; seconds: number } | null = null;
 let keeper: LastGameKeeper;              // the running game's log, copied where a page Safari stops cannot lose it
@@ -117,6 +127,11 @@ let fatal: { what: string; code?: string } | null = null;   // why the running g
 // the last game lost its graphics (GPU-LOST): Safari's WebGPU gives this page no adapter any more, so Play reloads it
 let gpuGone = false;
 let fps: FpsOverlay;
+let statusAt: { memory: WebAssembly.Memory; ptr: number } | null = null;   // the running game's status block
+let radioLink: RadioLink | null = null;  // the radio's words of the running game, once the game says it has them
+const radioPort = () => radioLink ??= statusAt ? RadioLink.open(statusAt.memory, statusAt.ptr) : null;
+let radio: Radio | null = null;          // made at the first click on Radio: a player who never uses it runs none of it
+const theRadio = () => radio ??= new Radio(radioPort, l => log.add(`[radio] ${l}`));
 let lobbyPanel: LobbyPanel;
 let quickChat: QuickChat;                // free roam's fixed phrases (quickchat.ts)
 let settings: SettingsPanel;
@@ -187,6 +202,16 @@ function renderProblems() {
   const note = $('#storage-note');
   note.hidden = st?.state !== 'warn';
   if (st?.state === 'warn') live(note, () => detail(st), st.code); else live(note, () => '');
+}
+/** No graphics since the last game's went (GPU-ADAPTER-AFTER-LOST): asked again every 10 s while the page shows, as the
+ *  browser may give them back after a while (Chrome: two minutes); the log says when they came back. */
+function recheckGpu(since = performance.now()) {
+  setTimeout(async () => {
+    const c = document.visibilityState === 'visible' ? await checkGpu(true) : null;
+    if (!c || c.code === 'GPU-ADAPTER-AFTER-LOST') { recheckGpu(since); return; }
+    log.add(`[app] the graphics are back after ${((performance.now() - since) / 1000).toFixed(0)} s`);
+    setCheck(c);
+  }, 10_000);
 }
 function blocking(): Check | undefined { return ORDER.map(id => checks.get(id)).find(c => c?.state === 'fail'); }
 
@@ -313,6 +338,50 @@ async function askRoam(): Promise<boolean> {
 }
 
 /**
+ * The fifth Play in this browser (four games played here, vault-ui.ts played) of a player with a profile here and no
+ * cloud saves asks to turn them on: the saves live only in this browser, and browsers clear a site's data now and then.
+ * Asked once (Not now and Esc are no); not at the Play that asked about free roam (the next one asks), on a test page,
+ * offline, or where the server keeps no cloud saves.  Turned on, the keyphrase is shown to keep (copy, download)
+ * before the game starts; it failed, the reason.
+ */
+async function askCloud() {
+  if (testPage() || offline || !vault.offerable() || !await newestProfile()) return;
+  vault.offered();
+  const p = (text: string) => Object.assign(document.createElement('p'), { textContent: text });
+  const body = document.createElement('div');
+  body.append(p(t('Your career is saved only in this browser. Browsers sometimes clear a website\'s data, for example when the device runs low on space or when browsing data is cleared, and your saves go with it.')),
+    p(t('Cloud saves keep a copy on this server under a keyphrase that only you have. With it you get your saves back, here or in another browser.')),
+    p(t('You can change this any time under Cloud saves on the start page.')));
+  const answer = confirmBox(t('Turn on cloud saves?'), body, t('Turn on'), false, '', t('Not now'));
+  $<HTMLButtonElement>('#confirm-ok').focus();
+  const on = await answer;
+  log.add(`[app] cloud saves: ${on ? 'turned on' : 'not now'} (asked at Play)`);
+  if (!on) return;
+  const got = await vault.enable();
+  if ('why' in got) {
+    await confirmBox(t('Cloud saves are not on'), got.why ? t('They could not be turned on: {error}. Try again under Cloud saves on the start page.', { error: got.why })
+      : t('They could not be turned on. Try again under Cloud saves on the start page.'), t('Continue'), false, '', '');
+    return;
+  }
+  const box = Object.assign(document.createElement('p'), { className: 'keyphrase', textContent: got.phrase });
+  const copy = Object.assign(document.createElement('button'), { type: 'button', className: 'text-btn', textContent: t('Copy') });
+  copy.onclick = async () => {
+    try { await navigator.clipboard.writeText(got.phrase); copy.textContent = t('Copied.'); }
+    catch { getSelection()?.selectAllChildren(box); }
+  };
+  const file = Object.assign(document.createElement('button'), { type: 'button', className: 'text-btn', textContent: t('Download keyphrase') });
+  file.onclick = () => vault.download();
+  const row = document.createElement('div'); row.className = 'row keyphrase-do';
+  row.append(copy, file);
+  const kept = document.createElement('div');
+  kept.append(p(t('Keyphrase made. Keep it safe: it is the only way back to these saves.')), box, row,
+    p(t('To load your saves, enter it under Cloud saves on the start page.')));
+  const shown = confirmBox(t('Your keyphrase'), kept, t('Continue'), false, '', '');
+  $<HTMLButtonElement>('#confirm-ok').focus();
+  await shown;
+}
+
+/**
  * A full server (the newest /players, asked again at Play): a game that takes a place at once (free roam on) waits in
  * line for it.  The player picks: wait in line (the game starts, alone until it is their turn; the default, also for
  * Esc), or play offline (this game only, without free roam or Online; settings.ini stays as it is).  True: offline.
@@ -365,8 +434,15 @@ async function startGame() {
     showNewer();
     return;
   }
+  // a cloud-saves conflict waiting (nothing syncs until it is settled): settled first, or no game; before the questions
+  // that write settings.ini, which the cloud's saves would replace
+  const cloud = await vault.askAtPlay();
+  if (cloud === 'stop') return;
+  if (cloud === 'taken') await loadSettings().catch(e => log.add(`[app] settings.ini not read again: ${e}`));
   // (the free-roam question says when the server is full: answered, it is not asked again what to do about that)
-  const alone = !await askRoam() && await askFull(counts);
+  const roamAsked = await askRoam();
+  if (!roamAsked) await askCloud();
+  const alone = !roamAsked && await askFull(counts);
   const pre = resolved();
   // inside the click: things that need a user gesture.  The context runs at the
   // mixer's own rate (44.1 kHz), so the worklet does not resample.
@@ -408,6 +484,11 @@ async function startGame() {
     NFSU2_WIDTH: String(size.w & ~1), NFSU2_HEIGHT: String(size.h & ~1), NFSU2_DISPLAY_HZ: String(displayHz),
   };
   const r = resolved(host);
+  // the names this game goes by, for the log as it leaves the browser (privacy.ts)
+  privacy.name(r.env.NFSU2_ROAM_NAME, 'you');
+  for (const c of crewList(r.env.NFSU2_ROAM_CREW ?? '')) privacy.name(c, 'crew');
+  privacy.name(r.env.NFSU2_ROAM_ROOM, 'room');
+  for (const p of await listProfiles(SAVE).catch(() => [])) privacy.name(p.name, 'profile');
   // offline mode: the server does not answer.  The movies stream from it, so unless every one of them is in this
   // browser they are off for this game (a movie the game could not read would stop it).
   setReach(await serverAnswers(2000));
@@ -436,7 +517,18 @@ async function startGame() {
     log.add(`[app] registry seeded from ${q.get('reg')} (page address)`);
   } else if (!await exists(SAVE, reg)) {
     if (r.env.NFSU2_SEED_REGISTRY === '0') log.add('[app] no registry yet, the game will run its first-run check');
+    else if (isPhone()) { await writeFile(SAVE, reg, phoneSeed(registryDefaults)); log.add(`[app] first launch, registry seeded with the built-in defaults and a phone's graphics (/save/${reg})`); }
     else { await writeFile(SAVE, reg, registryDefaults); log.add(`[app] first launch, registry seeded with the built-in defaults (/save/${reg})`); }
+  } else if (isPhone()) {
+    // a phone that started before the phone graphics (phonegraphics.ts): once
+    const text = await readText(SAVE, reg);        // null: not read (it is there), left as it is for the next start
+    const up = text === null ? null : phoneUpgrade(text, registryDefaults);
+    if (text === null) log.add(`[app] phone graphics: /save/${reg} could not be read, left as it is`);
+    else if (up) {
+      await writeFile(SAVE, reg, up.text);
+      log.add(up.lowered ? '[app] phone graphics: the graphics options still had the built-in defaults, now a phone\'s'
+        : '[app] phone graphics: the graphics options were changed in this browser, they stay');
+    }
   }
   // the game's Save option at Autosave, once per profile (settings.ini autosave, profile.ts); an input script
   // plays the game as it was recorded (on the Mac, where nothing changes the profiles) unless the page address
@@ -481,7 +573,7 @@ async function startGame() {
       netBack, netQueue, onSaved,
       netId: net ? pageId() : undefined, netRemoved,
       artifacts: q.get('artifacts') ?? undefined, dumpScale: q.get('dumpscale') ? +q.get('dumpscale')! : undefined,
-      toggleFullscreen, padPage: PAD_PAGE, log: logLine, onFatal: stopFatal,
+      toggleFullscreen, padPage: PAD_PAGE, log: logLine, onFatal: stopFatal, onOtherBuild: otherBuild,
     });
   } catch (e) {
     log.add(`[app] the game could not start: ${e}`);
@@ -493,20 +585,33 @@ async function startGame() {
     return;
   }
   setPhase('playing', T('Playing'), () => '');
+  vault.played();                     // counted for the cloud saves question (askCloud)
   keeper.start(loaded!.info.rev, gameHeld);
   $('#lastgame').hidden = true;           // about the game before this one
   document.body.dataset.phase = 'playing';
   away = new AwayCheck(session, awayLimits(), awayLine, logLine);
+  playTime = new PlayTime(session, playTimeLimit(), logLine);
   // a phone's render scale (device.ts): whether it has room for all its pixels, for its next game
   if (r.source.NFSU2_RENDER === 'device') renderCheck = new RenderCheck(session, r.env.NFSU2_RENDER, renderCheckTimes(), logLine);
-  touch.start(session);
+  touch.start(session, r.env.NFSU2_FF !== '0');   // Rumble off: no tick under a finger either
   textField.start(session);
   pauseHint.start(session);
   driftPanel.start(session);
-  quickChat.start(session, net && r.env.NFSU2_ROAM === '1' && r.env.NFSU2_ROAM_SAY !== '0');
+  photo.start(session);
+  quickChat.start(session, net && r.env.NFSU2_ROAM === '1' && r.env.NFSU2_ROAM_SAY !== '0',
+    phrasesOf(r.env.NFSU2_ROAM_SAY_PHRASES), groupsOf(r.env.NFSU2_ROAM_SAY_GROUPS));
   fps.memory = session.proc.memory;
   const st = session;
-  const waitStatus = setInterval(() => { if (st.status) { fps.reader = st.status; clearInterval(waitStatus); } }, 100);
+  let tries = 0;
+  const waitStatus = setInterval(() => {
+    if (!st.status) return;
+    if (!fps.reader) { fps.reader = st.status; if (session === st) statusAt = { memory: st.proc.memory, ptr: st.status.ptr }; }
+    if (session === st && radioPort()) {
+      $('.menu-radio').hidden = !canPickMusic();   // the menu may have been opened before the game's status block was known
+      if (radioWasOn()) void theRadio().resume();
+    }
+    if (radioLink || ++tries > 50) clearInterval(waitStatus);
+  }, 100);
   fps.set((r.env.NFSU2_FPS_COUNTER as FpsMode) in { off: 1, on: 1, detailed: 1 } ? r.env.NFSU2_FPS_COUNTER as FpsMode : 'off');
   const key = cap(menuKey());
   const hint = offlineNote + (fsNote || (full ? (touchFirst() ? t('{key} opens the menu.', { key }) : t('{key} opens the menu. Hold Esc to leave full screen.', { key }))
@@ -554,6 +659,26 @@ function stopFatal(what: string, code?: string) {
   if (!s || s.ended) return;
   fatal = { what, code };
   log.add(`[app] ${what}: stopping the game`);
+  s.terminate();
+}
+/** The renderer is of another build than the game module (game.ts onOtherBuild): this page came from offline mode's
+ *  copies (sw.ts) and the module from the server, or from a server swapping its module.  The game is stopped and the
+ *  page loaded again from the server: once a tab and module, while the server answers; else as any renderer that
+ *  did not start. */
+const OTHER_KEY = 'nfsu2-other-build';
+let reloadAtExit = false;
+function otherBuild(why: string) {
+  const s = session, rev = loaded!.info.rev;
+  if (!s || s.ended) return;
+  let again = true;
+  try { again = sessionStorage.getItem(OTHER_KEY) === rev; if (!again) sessionStorage.setItem(OTHER_KEY, rev); } catch { /* no storage: no reload that could repeat */ }
+  if (again || offline) {
+    log.add(`[app] this page is of another build than game ${rev} (${why}), ${offline ? 'and the server does not answer' : 'after a reload for that too'}`);
+    stopFatal(N('the graphics could not start'), 'GPU-RENDERER');
+    return;
+  }
+  log.add(`[app] this page is of another build than game ${rev} (${why}): stopping the game, then the page again from the server`);
+  reloadAtExit = true;
   s.terminate();
 }
 
@@ -608,6 +733,7 @@ const PAD_PAGE: PadPage = {
   dialog: () => !!pageDialog(),
   press: padPress,
   stick: (x, y) => quickChat.stick(x, y),
+  capture: (s, pressed) => photo.pad(s, pressed),
 };
 
 let awake: (() => void) | null = null;   // the running game's Wake Lock (display.ts keepScreenOn)
@@ -615,21 +741,26 @@ let touch: TouchControls;                // the controls on the game while a fin
 let textField: TextField;               // the field for a phone's keyboard while the game asks for text (textentry.ts)
 let pauseHint: PauseHint;               // the line to the page's menu under the game's pause menu (pausehint.ts)
 let driftPanel: DriftPanel;             // free roam's drift mode: its score under the game's Bank panel, a note at F2 (drift.ts)
+let photo: PhotoMode;                   // photo mode: F12 in the world, its panel and its keys (photo.ts)
 
 function endStage() {
   touch.stop();
   textField.stop();
   pauseHint.stop();
   driftPanel.stop();
+  photo.stop();
   quickChat.stop();
   awake?.(); awake = null;
   away?.stop(); away = null;
+  playTime?.stop(); playTime = null;
   hideRemoved();
   renderCheck?.stop(); renderCheck = null;
   Object.assign(DEVICE, deviceDefaults());      // its verdict, for the next game without a reload
   exitFullscreen();
   untrack?.(); untrack = null;
   fps.stop(); fps.reader = null; fps.memory = null;
+  radio?.stop('the game closed');
+  radioLink = null; statusAt = null;
   lobbyPanel.clear();
   for (const id of ['#crews-pop', '#menu']) { const d = $<HTMLDialogElement>(id); if (d.open) d.close(); }
   // a Quit question still open belongs to the game that ended (its answer would
@@ -652,6 +783,7 @@ function onExit(s: GameSession, code: number) {
   endStage();
   players?.now();
   download.resume();
+  if (reloadAtExit) { reloadAtExit = false; setPhase('boot', T('Loading'), T('Loading the game.')); void reloadFromServer(); return; }
   $('#log-btn').hidden = false;
   // a crash, or a game stopped for want of a subsystem: where to send the log (not a normal close or a Stop)
   $('#report').hidden = !fatal && (code === 0 || code === -1);
@@ -730,6 +862,7 @@ function openHelp() {
  *  on the server they came too often */
 const FRIEND_NOTICES = false;
 function notice(text: string, who?: string) {
+  privacy.name(who, 'player');
   log.add(`[notice] ${text}`);
   if (who && !FRIEND_NOTICES) return;
   const box = $('#notices'), line = document.createElement('div');
@@ -828,6 +961,12 @@ function awayLimits(): AwayLimits {
   const ms = (s: number, d: number) => Number.isFinite(s) && s > 0 ? s * 1000 : d;
   return { inputMs: ms(inputS, AWAY_LIMITS.inputMs), hiddenMs: ms(hiddenS, AWAY_LIMITS.hiddenMs), warnMs: ms(warnS, AWAY_LIMITS.warnMs) };
 }
+/** the play before our message on the game's phone (playtime.ts); a test page's address may give it in seconds
+ *  (playtime=seconds) */
+function playTimeLimit(): number {
+  const s = Number(q.get('playtime'));
+  return Number.isFinite(s) && s > 0 ? s * 1000 : SMS_AFTER_MS;
+}
 /** the render check's times; a test page's address may give them in seconds of driving (rendercheck=warmup,verdict) */
 function renderCheckTimes(): RenderCheckTimes {
   const [warmS, decideS] = (q.get('rendercheck') ?? '').split(',').map(Number);
@@ -842,7 +981,8 @@ function toast(msg: string, ms: number) {
   (toast as any).timer = setTimeout(() => { t.hidden = true; }, ms);
 }
 
-/** F12: the next frame the renderer draws, as a PNG beside the saves (Saves on the start page shows it) */
+/** F12 (photo.ts: photo mode's picture, or where it cannot open): the next frame the renderer draws, as a PNG beside the
+ *  saves (Saves on the start page shows it) */
 async function screenshot() {
   const r = session?.renderer;
   if (!r?.dump) { toast(t('No screenshot: the picture is not there yet.'), 2500); return; }
@@ -861,7 +1001,7 @@ async function screenshot() {
 // ----------------------------------------------------------- page menu --
 function openMenu() {
   const m = $<HTMLDialogElement>('#menu');
-  if (m.open) { m.close(); return; }                // (its Crews popup too: the menu's close)
+  if (m.open) { $<HTMLDialogElement>('#playlist').close(); m.close(); return; }                // (its Crews popup too: the menu's close)
   const fsButton = m.querySelector<HTMLButtonElement>('[data-act="fullscreen"]')!;
   fsButton.textContent = isFullscreen() ? t('Leave full screen') : t('Full screen');
   fsButton.hidden = !canFullscreen() && fromHomeScreen();         // from an iPhone's Home Screen: already without bars
@@ -873,6 +1013,7 @@ function openMenu() {
   crews.hidden = roamCrews === null || !session?.net?.crews;
   crews.textContent = crewsLabel();
   m.querySelector<HTMLButtonElement>('[data-act="quit"]')!.textContent = quitLabel();
+  showRadio(m);
   const line = $('#menu-save');
   if (saved) line.textContent = t('Last saved at {when} ({name}).', { when: when(saved.at), name: saved.name });
   else {
@@ -935,6 +1076,53 @@ async function menuCrews(list: Crew[], focus: (root: HTMLElement) => Element | n
   catch (e) { log.add(`[app] settings.ini not written: ${e}`); }
   log.add(`[app] crews: ${list.length ? list.map(c => `${c.name} (${c.rgb})`).join(', ') : 'none'} (the page menu)`);
 }
+function showRadio(m: HTMLElement) {
+  const button = m.querySelector<HTMLButtonElement>('[data-act="radio"]')!, on = radio?.on ?? false;
+  m.querySelector<HTMLElement>('.menu-radio')!.hidden = !radioPort() || !canPickMusic();    // a game without the radio's words (an older build) has no Radio row
+  button.classList.toggle('selected', on);
+  button.setAttribute('aria-pressed', String(on));
+  $('#radio-label').textContent = t('Radio: {mode}', { mode: on ? t(N('on')) : t(N('off')) }) + (radio?.folder ? ` · ${radio.folder}` : '');
+}
+async function radioClick(act: 'radio' | 'radio-folder') {
+  const r = theRadio();
+  try { await (act === 'radio-folder' ? r.chooseFolder(pickMusic) : r.on ? r.turnOff() : r.turnOn(pickMusic)); } catch (e) { log.add(`[radio] ${act}: ${e}`); }
+}
+const MODE_WORDS: Record<Mode, string> = { menu: N('Menu'), racing: N('Race'), all: N('All'), off: N('Off') };
+/** The Playlist window lists the folder's tracks with their modes; drawn once for a folder, one change listener for all rows. */
+let playlistDrawn: readonly string[] | null = null;
+function openPlaylist() {
+  const body = $('#playlist-body'), paths = radio?.trackPaths ?? [], make = (tag: string, props: object) => Object.assign(document.createElement(tag), props);
+  if (playlistDrawn !== paths) {
+    playlistDrawn = paths;
+    const rows = document.createDocumentFragment();
+    let folder = '';
+    paths.forEach((name, i) => {
+      const at = name.lastIndexOf('/'), dir = name.slice(0, Math.max(0, at));
+      if (dir !== folder) rows.append(make('div', { className: 'track-folder', textContent: folder = dir }));
+      const seg = make('div', { className: 'seg' });
+      seg.setAttribute('role', 'radiogroup'); seg.setAttribute('aria-label', name);
+      for (const m of MODES) {
+        const opt = make('label', { className: 'opt' }), input = make('input', { type: 'radio', name: `mode${i}`, value: m, checked: radio?.mode(name) === m });
+        input.dataset.track = String(i);
+        opt.append(input, t(MODE_WORDS[m]));
+        seg.append(opt);
+      }
+      const row = make('div', { className: 'track' });
+      row.append(make('span', { textContent: name.slice(at + 1), title: name }), seg);
+      rows.append(row);
+    });
+    body.replaceChildren(rows);
+    if (!paths.length) body.textContent = t('No music yet: pick a folder first.');
+  }
+  $('#playlist-shuffle').hidden = !paths.length;
+  $<HTMLInputElement>('#playlist-shuffle input').checked = radio?.shuffle ?? false;
+  $<HTMLDialogElement>('#playlist').showModal();
+}
+const setShuffle = (e: Event) => radio?.setShuffle((e.target as HTMLInputElement).checked);
+function setTrackMode(e: Event) {
+  const r = e.target as HTMLInputElement, name = playlistDrawn?.[Number(r.dataset.track)];
+  if (name !== undefined) radio?.setMode(name, r.value as Mode);
+}
 async function menuAction(act: string) {
   const m = $<HTMLDialogElement>('#menu');
   switch (act) {
@@ -957,6 +1145,8 @@ async function menuAction(act: string) {
       break;
     }
     case 'crews': openCrews(); break;
+    case 'radio-folder': case 'radio': await radioClick(act); showRadio(m); break;
+    case 'playlist': openPlaylist(); break;
     case 'help': m.close(); openHelp(); break;
     case 'offline':
       m.close();
@@ -1011,14 +1201,14 @@ function quitLabel(): string {
 function confirmBox(title: string, body: Node | string, ok: string, danger = false, about = '', cancel = t('Cancel')): Promise<boolean> {
   return choiceBox(title, body, ok, cancel, danger, about).then(v => v === 'ok');
 }
-/** the same, with which way it closed: 'ok', 'cancel' (the cancel button), '' (Esc) */
+/** the same, with which way it closed: 'ok', 'cancel' (the cancel button, none when cancel is ''), '' (Esc) */
 function choiceBox(title: string, body: Node | string, ok: string, cancel: string, danger = false, about = ''): Promise<string> {
   const d = $<HTMLDialogElement>('#confirm');
   d.dataset.about = about;            // 'quit': closed when the game ends (endStage)
   $('#confirm-title').textContent = title;
   const b = $('#confirm-body'); b.replaceChildren(typeof body === 'string' ? Object.assign(document.createElement('p'), { textContent: body }) : body);
   const okb = $<HTMLButtonElement>('#confirm-ok'); okb.textContent = ok; okb.className = danger ? 'btn danger' : 'btn selected';
-  $('#confirm-cancel').textContent = cancel;
+  const cb = $('#confirm-cancel'); cb.textContent = cancel; cb.hidden = !cancel;     // '': the one button
   d.returnValue = '';
   d.showModal();
   return new Promise(res => d.addEventListener('close', () => res(d.returnValue), { once: true }));
@@ -1029,8 +1219,10 @@ function choiceBox(title: string, body: Node | string, ok: string, cancel: strin
 async function downloadLog() {
   if (session?.logReport()) await log.waitFor('[watchdog] log download ready', 2000);
   // the last game's copy first, when that game did not get to its end (lastgame.ts)
-  const prev = lastGame ? `=== the last game's log, as the page kept it while it ran ===\n${lastGame.log}=== this page's log ===\n` : '';
-  downloadBlob(prev + log.text(), `nfsu2-${stamp()}.log`, 'text/plain');
+  // as it may leave the browser (privacy.ts): no names, no addresses; a copy from a page before that scrubbed nothing
+  const kept = lastGame ? (lastGame.scrubbed ? lastGame.log : privacy.scrub(lastGame.log)) : '';
+  const prev = lastGame ? `=== the last game's log, as the page kept it while it ran ===\n${kept}=== this page's log ===\n` : '';
+  downloadBlob(`${SCRUB_NOTE}\n${prev}${privacy.scrub(log.text())}`, `nfsu2-${stamp()}.log`, 'text/plain');
 }
 /** what the running game holds now, for each copy of its log (lastgame.ts): what fills a phone's memory as it plays */
 function gameHeld(): string {
@@ -1174,6 +1366,13 @@ async function reload() {
   await swOnline();
   location.reload();
 }
+/** A reload offline mode's copies do not answer (otherBuild): the service worker goes first.  The page registers it
+ *  again once the module has loaded, and its install takes new copies from the server. */
+async function reloadFromServer() {
+  await saves.settled();
+  try { await (await navigator.serviceWorker?.getRegistration())?.unregister(); } catch { /* none, or not here */ }
+  location.reload();
+}
 /** Offline mode's copies answer first for a while after the server did not (sw.ts); it answers now, so the start
  *  after this reload is the server's.  An older service worker does not answer: 0.5 s at most. */
 function swOnline(): Promise<void> {
@@ -1200,7 +1399,7 @@ function showOverrides(given: string[], dev: boolean) {
   const env = Object.entries(ENVIRONMENT).map(([k, v]) => `${k}=${v}`);
   live(o, () => t('Test settings from this page\'s address (development server): save folder "{folder}"', { folder: SAVE }) +
     (env.length ? t('; {vars} (wins over Settings)', { vars: env.join(', ') }) : '') +
-    ['fresh', 'reg', 'script', 'artifacts', 'dumpscale', 'away'].filter(k => q.has(k)).map(k => `; ${k}`).join('') + '.');
+    ['fresh', 'reg', 'script', 'artifacts', 'dumpscale', 'away', 'playtime'].filter(k => q.has(k)).map(k => `; ${k}`).join('') + '.');
 }
 
 export async function boot() {
@@ -1210,7 +1409,7 @@ export async function boot() {
   const given = takeParams(dev);
   instance = claimInstance(`nfsu2-saves:${SAVE}`);
   // the last game of this save folder that did not get to its end (Safari stopped the page, say): its log is offered
-  keeper = new LastGameKeeper(SAVE, log, logLine);
+  keeper = new LastGameKeeper(SAVE, log, logLine, text => privacy.scrub(text));
   lastGame = lastGameToOffer(SAVE);
   if (lastGame) {
     log.keep(lastGameLine(lastGame));
@@ -1261,13 +1460,16 @@ export async function boot() {
   // keyphrase saves (on a server that keeps them): synced by the tab that owns the saves, once its settings are loaded
   vault = new VaultPanel($('#vault'), {
     saveDir: SAVE, owner: () => instance.owner, playing: () => !!session, busy: () => !!session || starting || !instance.owner,
-    confirm: confirmBox, onRestored: () => { void loadSettings(); void settings.refresh(); void saves.refresh(); }, log: logLine,
+    confirm: confirmBox, choose: (title, body, ok, cancel) => choiceBox(title, body, ok, cancel),
+    onRestored: () => { void loadSettings(); void settings.refresh(); void saves.refresh(); }, log: logLine,
   });
   $<HTMLButtonElement>('#play').onclick = () => void play();
   $<HTMLButtonElement>('#retry').onclick = () => void loadModule();
   $<HTMLButtonElement>('#reload').onclick = () => void reload();
   $<HTMLButtonElement>('#log-btn').onclick = downloadLog;
   $('#menu').addEventListener('click', e => { const a = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-act]'); if (a) void menuAction(a.dataset.act!); });
+  $('#playlist-body').addEventListener('change', setTrackMode);
+  $('#playlist-shuffle').addEventListener('change', setShuffle);
   $('#menu').addEventListener('close', () => {
     const pop = $<HTMLDialogElement>('#crews-pop'); if (pop.open) pop.close();      // the menu's Crews go with it
     $('#stage').classList.remove('cursor'); $('#stage').querySelector('canvas')?.focus();
@@ -1282,13 +1484,14 @@ export async function boot() {
 
   // F8 / F9 belong to the page while the game runs (the game binds neither,
   // Chrome reserves neither); caught first, so the game never sees them.  F12
-  // too: the page's screenshot, not the game's (whose copy of the frame comes
-  // out black in this port) nor the browser's developer tools.
+  // too: photo mode in the world, its picture while it is on, else the page's
+  // screenshot (not the game's, whose copy of the frame comes out black in
+  // this port, nor the browser's developer tools).
   window.addEventListener('keydown', e => {
     if (session && (e.code === 'F8' || e.code === 'F9' || e.code === 'F12')) {
       e.preventDefault(); e.stopImmediatePropagation();
       if (e.repeat) return;
-      if (e.code === 'F8') toast(fpsLabel(fps.cycle()), 1500); else if (e.code === 'F9') openMenu(); else void screenshot();
+      if (e.code === 'F8') toast(fpsLabel(fps.cycle()), 1500); else if (e.code === 'F9') openMenu(); else photo.f12();
       return;
     }
     // Enter plays only when nothing else has the focus (or Play itself does): a
@@ -1333,6 +1536,7 @@ export async function boot() {
     fullscreen: () => canFullscreen() || !fromHomeScreen(),
   });
   driftPanel = new DriftPanel($('#stage'), { toast, wide: () => hudWide, log: logLine });
+  photo = new PhotoMode($('#stage'), { shoot: screenshot, screenshot: () => void screenshot(), log: logLine });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { void checkNewer(); vault.shown(); } });
   setInterval(() => { if (document.visibilityState === 'visible') void checkNewer(); }, NEWER_EVERY_MS);
 
@@ -1352,7 +1556,7 @@ export async function boot() {
   void saves.refresh();
   void vault.start();
   void instance.whenOwner.then(async () => { await loadSettings(); evaluate(); void settings.refresh(); void saves.refresh(); vault.ownerNow(); syncPicker(); });
-  void checkGpu().then(setCheck);
+  void checkGpu(lastGame?.ended?.why === 'GPU-LOST').then(c => { setCheck(c); if (c.code === 'GPU-ADAPTER-AFTER-LOST') recheckGpu(); });
   // Firefox's answer to its storage prompt comes later: the check again then
   void checkStorage().then(({ answer, ...c }) => { setCheck(c); void answer?.then(setCheck); });
   refreshMeasured = measureRefresh(60).then(r => { displayHz = r.hz; log.add(`[app] display refresh ${r.raw.toFixed(1)} Hz -> ${r.hz}`); });

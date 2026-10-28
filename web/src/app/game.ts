@@ -7,7 +7,7 @@ import { startProcess, type GameProcess } from '../host/process';
 import { N } from './i18n';
 import { HostKind } from '../host/abi';
 import {
-  attachAudio, attachInput, attachNet, attachRenderer,
+  attachAudio, attachInput, attachNet, attachRenderer, OtherBuild,
   type AudioSubsystem, type InputSubsystem, type NetSubsystem, type RendererSubsystem, type Subsystem,
 } from './subsystems';
 import { StatusReader } from './status';
@@ -54,6 +54,9 @@ export interface SessionOptions {
   /** a subsystem the game cannot do without (the renderer) failed to attach, or stopped working;
    *  what: English (the log; the page translates it); code: its fixed name, the same in every language */
   onFatal(what: string, code?: string): void;
+  /** the renderer is of another build than the game module (gpu/index.ts OtherBuild): this page is not the one that
+   *  goes with it (without this, onFatal as for any renderer that did not start); why: English, the log's */
+  onOtherBuild?(why: string): void;
 }
 
 export class GameSession {
@@ -99,15 +102,22 @@ export class GameSession {
       }
     };
     // not awaited one by one: a subsystem waiting for its registration must not hold up the others
-    void attach('renderer', () => attachRenderer(s.proc, o.canvas, {
-      ...common, width: o.canvas.width, height: o.canvas.height, displayHz: o.displayHz, artifacts: o.artifacts, dumpScale: o.dumpScale,
-      // a frozen picture otherwise: the game stops and the page says why
-      onLost: () => { if (!s.detached) o.onFatal(N('the graphics stopped working'), 'GPU-LOST'); },
-      onMarks: o.marks,
-    })).then(r => {
+    let other = '';
+    void attach('renderer', async () => {
+      try {
+        return await attachRenderer(s.proc, o.canvas, {
+          ...common, width: o.canvas.width, height: o.canvas.height, displayHz: o.displayHz, artifacts: o.artifacts, dumpScale: o.dumpScale,
+          // a frozen picture otherwise: the game stops and the page says why
+          onLost: () => { if (!s.detached) o.onFatal(N('the graphics stopped working'), 'GPU-LOST'); },
+          onMarks: o.marks,
+        });
+      } catch (e) { if (e instanceof OtherBuild) other = e.message; throw e; }
+    }).then(r => {
       s.renderer = r;
       // without a picture there is no game to play: say so instead of a black screen
-      if (!r && !s.detached) o.onFatal(N('the graphics could not start'), 'GPU-RENDERER');
+      if (r || s.detached) return;
+      if (other && o.onOtherBuild) o.onOtherBuild(other);
+      else o.onFatal(N('the graphics could not start'), 'GPU-RENDERER');
     });
     void attach('audio', () => attachAudio(s.proc, { ...common, context: o.audio })).then(a => {
       s.audio = a;

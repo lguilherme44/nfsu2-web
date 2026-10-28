@@ -17,7 +17,10 @@
 // - VaultSync: this browser's link (the keyphrase, the version it has, a hash of the files it sent or took) and the
 //   two ways of syncing.  Sending: after the game saves and when it closes, if the files changed since; taking: when
 //   the page opens and before Play, if another browser sent a newer version and the files here did not change.  Both
-//   changed (to something else): a conflict, the player picks.  A browser with no profile while its keyphrase has
+//   changed (to something else): a conflict, the player picks.  But a version this browser sent itself and never
+//   heard back about (a timeout, a frozen or closed page: Link.sent) is no other browser's: the link follows it and
+//   the files here go out over it (2026-10-27, issue 33: one lost answer stopped a player's syncing for 7 hours, and
+//   "Use the cloud's" then took that old version).  A browser with no profile while its keyphrase has
 //   some (its storage cleared, an empty backup restored) never sends by itself either, a version with no profile
 //   never replaces the profiles here by itself, and neither does a version older than the one here (the server went
 //   back: a backup restored, a write lost).  A keyphrase the server does not have (any more) stays linked: the next
@@ -25,7 +28,7 @@
 
 import { WORDS } from './vault-words';
 import { unzip, zip } from './zip';
-import { coverOf, profileName } from './profile';
+import { coverOf, profileMoney, profileName } from './profile';
 import { isScreenshot, PROFILES_DIR } from './savefs';
 import { withoutDevice } from './settings';
 import { fill, N, type Vars } from './i18n';
@@ -162,11 +165,13 @@ export async function contentHash(files: SaveFile[]): Promise<string> {
   return hex(new Uint8Array(await crypto.subtle.digest('SHA-256', await new Blob(parts as BlobPart[]).arrayBuffer())));
 }
 
-/** The profiles among the files ("NFS Underground 2/<NAME>/<NAME>", not a cover shoot's). */
-export function profilesIn(files: SaveFile[]): string[] {
-  return files.map(f => f.path.split('/'))
-    .filter(p => p.length === 3 && p[0] === PROFILES_DIR && p[1].toLowerCase() === p[2].toLowerCase() && !coverOf(p[1])).map(p => p[1]);
+/** The profiles' files among the files ("NFS Underground 2/<NAME>/<NAME>", not a cover shoot's). */
+function profileFiles(files: SaveFile[]): SaveFile[] {
+  return files.filter(f => { const p = f.path.split('/');
+    return p.length === 3 && p[0] === PROFILES_DIR && p[1].toLowerCase() === p[2].toLowerCase() && !coverOf(p[1]); });
 }
+/** The profiles among the files, by name. */
+export const profilesIn = (files: SaveFile[]): string[] => profileFiles(files).map(f => f.path.split('/')[1]);
 
 /** every profile whole, as the game wrote it (its checksums hold): none was read halfway through a save */
 const wholeProfiles = (files: SaveFile[]) => files.every(f => {
@@ -262,7 +267,14 @@ export interface Link {
   gone?: boolean;
   /** what hash counts: LINK_V, kept(); an older one, keptBy(v) (none: 1; VaultSync.upgraded) */
   v?: number;
+  /** the hashes of files sent under this link whose answer never came (a timeout, a frozen or closed page): a version
+   *  of the server's with one of them is this browser's own, not another's (none: every send was answered) */
+  sent?: string[];
 }
+
+/** one side of a conflict: its profiles and their banks (null: not known) and when they were saved (here: the newest
+ *  profile's file's time, this device's clock; the cloud: the server's; null: not known) */
+export interface Side { saved: number | null; profiles: { name: string; money: number | null }[] | null }
 
 export interface VaultDeps {
   /** the files of the save folder as a keyphrase keeps them (kept()); was: as a link of that version counted them
@@ -284,7 +296,7 @@ export type SyncState =
    * the player picks: both changed ('both'); no profile here while the keyphrase keeps some ('empty'); the keyphrase's
    * version has no profile while here are some ('bare'); the keyphrase's version is older than the one here ('older')
    */
-  | { s: 'conflict'; why: 'both' | 'empty' | 'bare' | 'older'; theirs: Remote | null }
+  | { s: 'conflict'; why: 'both' | 'empty' | 'bare' | 'older'; theirs: Remote | null; here: Side; cloud: Side | null }
   /** the last try failed: the next save, Play or Sync now tries again (msg: why, in English; why: the same for t(); code:
    *  its fixed name) */
   | { s: 'error'; msg: string; why: { t: string; v?: Vars }; code: string }
@@ -303,6 +315,15 @@ export function failureOf(e: unknown): { msg: string; why: { t: string; v?: Vars
 
 /** the link's version now: its hash counts kept() (Link.v) */
 const LINK_V = 3;
+/** the unanswered sends a link remembers */
+const SENT_MAX = 8;
+
+/** a side of a conflict from its files (saved: the server's time of them; none: the newest profile's file's) */
+export function sideOf(files: SaveFile[], saved?: number): Side {
+  const profiles = profileFiles(files), times = profiles.filter(f => f.mtime).map(f => f.mtime!);
+  return { saved: saved ?? (times.length ? Math.max(...times) : null),
+    profiles: profiles.map(f => ({ name: f.path.split('/')[1], money: profileMoney(f.data) })) };
+}
 
 export class VaultSync {
   link: Link | null;
@@ -370,9 +391,56 @@ export class VaultSync {
     this.set({ s: 'gone' });
   }
 
-  /** a version of the keyphrase's that differs from the one here, which changed since too (both) or not */
-  private clash(l: Link, theirs: Remote | null, both: boolean): void {
-    this.set({ s: 'conflict', why: theirs && theirs.saved < l.saved ? 'older' : both ? 'both' : 'bare', theirs });
+  /** a version of the keyphrase's that differs from the one here, which changed since too (both) or not; here: the
+   *  files here, cloud: theirs (none: not fetched) */
+  private clash(l: Link, theirs: Remote | null, both: boolean, here: SaveFile[], cloud?: SaveFile[]): void {
+    this.set({ s: 'conflict', why: theirs && theirs.saved < l.saved ? 'older' : both ? 'both' : 'bare', theirs, here: sideOf(here),
+      cloud: cloud ? sideOf(cloud, theirs?.saved) : theirs ? { saved: theirs.saved, profiles: null } : null });
+  }
+
+  /** the files here (hash) about to be sent under the link: remembered until an answer comes (Link.sent) */
+  private sending(l: Link, hash: string): Link {
+    this.setLink({ ...l, sent: [...(l.sent ?? []).filter(h => h !== hash), hash].slice(-SENT_MAX) });
+    return this.link!;
+  }
+
+  /** the keyphrase's version now, its files and their hash; null: none */
+  private async current(k: Keys, api: VaultApi): Promise<{ remote: Remote; files: SaveFile[]; hash: string } | null> {
+    const r = await api.get();
+    if (!r) return null;
+    if (!('box' in r)) throw incomplete();
+    const files = await this.filesOf(k, r.box);
+    return { remote: r.remote, files, hash: await contentHash(files) };
+  }
+
+  /**
+   * The files here sent over rev (null: as the keyphrase's first version again).  When the server has another version:
+   * the same files are linked; this browser's own, sent before without an answer (Link.sent), is linked and sent over,
+   * once; another's is a conflict.
+   */
+  private async send(l: Link, k: Keys, files: SaveFile[], hash: string, rev: string | null): Promise<void> {
+    const api = this.api(k), box = await this.boxOf(k, files);
+    for (let again = false; ; again = true) {
+      l = this.sending(l, hash);
+      const r = await api.put(box, rev);
+      if ('saved' in r) return this.linked(l.phrase, r.saved, hash, files);
+      const c = r.conflict && await this.current(k, api);
+      if (!c) return this.gone();
+      if (c.hash === hash) return this.linked(l.phrase, c.remote, hash, files);
+      if (again || !l.sent?.includes(c.hash)) {
+        if (l.gone) this.setLink(l = { ...l, gone: false });         // another browser sent it again first
+        return this.clash(l, c.remote, true, files, c.files);
+      }
+      l = this.relinked(l, c);
+      rev = c.remote.rev;
+    }
+  }
+
+  /** the link at a version of this browser's own whose answer never came */
+  private relinked(l: Link, c: { remote: Remote; files: SaveFile[]; hash: string }): Link {
+    this.setLink({ phrase: l.phrase, rev: c.remote.rev, hash: c.hash, saved: c.remote.saved, earlier: c.remote.earlier,
+      profiles: profilesIn(c.files).length, v: LINK_V });
+    return this.link!;
   }
 
   /** A new keyphrase for the saves here, their first version sent: the keyphrase. */
@@ -430,12 +498,15 @@ export class VaultSync {
       if ('same' in r) { if (r.same.earlier !== l.earlier) this.setLink({ ...l, earlier: r.same.earlier }); return; }
       const files = await this.d.files(), hash = await contentHash(files), theirs = await this.filesOf(k, r.box);
       l = await this.upgraded(hash);
+      const theirHash = await contentHash(theirs);
       // the same as here (a settings.ini both pages brought up to date)
-      if (await contentHash(theirs) === hash) return this.linked(l.phrase, r.remote, hash, files);
+      if (theirHash === hash) return this.linked(l.phrase, r.remote, hash, files);
+      // this browser's own, sent before without an answer: the link follows it, and push() sends what changed since
+      if (l.sent?.includes(theirHash)) { this.relinked(l, { remote: r.remote, files: theirs, hash: theirHash }); return; }
       // taken only when the saves here did not change since, it is not older than theirs, and it keeps their profiles
       const older = r.remote.saved < l.saved, bare = !profilesIn(theirs).length && profilesIn(files).length > 0;
       if (hash === l.hash && !older && !bare) return this.take(l.phrase, k, r.box, r.remote);
-      this.clash(l, r.remote, hash !== l.hash);
+      this.clash(l, r.remote, hash !== l.hash, files, theirs);
     });
   }
 
@@ -449,12 +520,10 @@ export class VaultSync {
       const files = await this.d.files();
       if (o.playing && !wholeProfiles(files)) return;
       const hash = await contentHash(files), l = await this.upgraded(hash);
-      if (hash === l.hash) return;
-      if (!profilesIn(files).length && l.profiles > 0) return this.set({ s: 'conflict', why: 'empty', theirs: null });
-      const k = await this.keysFor(l.phrase), r = await this.api(k).put(await this.boxOf(k, files), l.rev);
-      if ('saved' in r) return this.linked(l.phrase, r.saved, hash, files);
-      if (!r.conflict) return this.gone();
-      this.clash(l, r.conflict, true);
+      // unchanged since, unless a send was not answered: the server may have that one (the files here went back since)
+      if (hash === l.hash && !l.sent?.length) return;
+      if (!profilesIn(files).length && l.profiles > 0) return this.set({ s: 'conflict', why: 'empty', theirs: null, here: sideOf(files), cloud: null });
+      await this.send(l, await this.keysFor(l.phrase), files, hash, l.rev);
     });
   }
 
@@ -465,11 +534,12 @@ export class VaultSync {
     return this.run(N('Syncing'), async () => {
       const l = this.link!, files = await this.d.files(), hash = await contentHash(files), k = await this.keysFor(l.phrase);
       const box = await this.boxOf(k, files), api = this.api(k);
+      this.sending(l, hash);
       let r = await api.put(box, st.theirs?.rev ?? l.rev);
       if ('conflict' in r && r.conflict) r = await api.put(box, r.conflict.rev);
       if ('saved' in r) return this.linked(l.phrase, r.saved, hash, files);
       if (!r.conflict) return this.gone();
-      this.clash(l, r.conflict, true);
+      this.clash(l, r.conflict, true, files);
     });
   }
 
@@ -477,12 +547,8 @@ export class VaultSync {
   resend(): Promise<void> {
     if (!this.link?.gone) return Promise.resolve();
     return this.run(N('Syncing'), async () => {
-      const l = this.link!, files = await this.d.files(), hash = await contentHash(files), k = await this.keysFor(l.phrase);
-      const r = await this.api(k).put(await this.boxOf(k, files), null);
-      if ('saved' in r) return this.linked(l.phrase, r.saved, hash, files);
-      // another browser sent it again first: theirs or these, the player picks
-      this.setLink({ ...l, gone: false });
-      this.clash(l, r.conflict, true);
+      const l = this.link!, files = await this.d.files(), hash = await contentHash(files);
+      await this.send(l, await this.keysFor(l.phrase), files, hash, null);
     });
   }
 
@@ -495,6 +561,9 @@ export class VaultSync {
       if ('box' in r) await this.take(l.phrase, k, r.box, r.remote);
     });
   }
+
+  /** The saves here replaced while a conflict waited (vault-ui.ts Put back): the next pull and push judge it again. */
+  reopen() { if (this.state.s === 'conflict') this.set(this.rest()); }
 
   /** This browser stops syncing (after what it is doing); the saves stay here and on the server. */
   forget(): Promise<void> {

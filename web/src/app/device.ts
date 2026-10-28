@@ -26,9 +26,11 @@ export function touchFirst(): boolean { return matchMedia('(pointer: coarse)').m
 /** settings.ini keys whose default is another on this device: what applies when neither the file nor the page
  *  address sets them.  Phones: 75% resolution scale (a phone's screen has more pixels than its GPU fills at 60 fps),
  *  or 100% once the render check found room to spare on this one (rendercheck.ts), and full screen (no browser
- *  bars over the game). */
+ *  bars over the game).  Players' cars shown in free roam: 16 on phones, 24 on tablets, 32 elsewhere (an iPhone
+ *  was stopped for memory as 22 friends' cars loaded at once at the new career's start, 2026-10-25). */
 export function deviceDefaults(): Record<string, string> {
-  return isPhone() ? { render: rememberedRender() === 'backing' ? 'backing' : 'scale:0.75', fullscreen: 'on' } : {};
+  if (isPhone()) return { render: rememberedRender() === 'backing' ? 'backing' : 'scale:0.75', fullscreen: 'on', roam_max_cars: '16' };
+  return touchFirst() ? { roam_max_cars: '24' } : {};
 }
 
 /** the render check's verdict on this phone: in this browser only, like the other device defaults (settings.ini,

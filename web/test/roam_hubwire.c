@@ -155,7 +155,7 @@ int main(int argc, char **argv){
         m.h.type = RC_MSG_LOBBY;
         rc_lobby *l = &m.u.lobby;
         l->op = RC_LOBBY_ADVERT; l->state = RC_LS_OPEN; l->max = 6; l->to = 0; l->lobby = 0xA1B2C3D4u; l->race = 0x0BADF00Du;
-        l->x = -1234; l->y = 567; l->n = 2; l->ids[0] = 0x1234ABCDu; l->ids[1] = 0x55u;
+        l->x = -1234; l->y = 567; l->n = 2; l->away_s = 25; l->ids[0] = 0x1234ABCDu; l->ids[1] = 0x55u;   /* (away: the hub skips it) */
     } else if (!strcmp(argv[1], "racerep")){
         m.h.type = RC_MSG_RACEREP;
         rc_racerep *r = &m.u.racerep;

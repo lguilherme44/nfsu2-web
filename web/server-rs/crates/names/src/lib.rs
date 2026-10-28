@@ -15,6 +15,9 @@
 //!    part of the name on its own, and plural: the parts are split where a character is no letter and where a
 //!    capital follows a small letter, digits and signs read as letters between them or not ("f4g_42", "XxCoonXx",
 //!    "Big1Fag"); the name's letters together count as one too ("F A G").  "Dyke" after "Van" is the surname.
+//! The other offensive names go the same way (picked from the live server's names, 2026-10-26): Nazi ones, hate
+//! aimed at a group, terror, sexual violence; and a name with 1488 in it (the neo-Nazi code).  A swear word is no
+//! such name.
 
 use unicode_general_category::{GeneralCategory, get_general_category};
 use unicode_normalization::UnicodeNormalization;
@@ -41,9 +44,54 @@ pub const ANYWHERE: &[&str] = &[
     "jigaboo",
     "porchmonkey",
     "junglebunny",
+    "nibba",
+    "nigus",
+    "nygga",
+    "kneegro",
+    "wigga",
+    "meganiga",
+    "czarnuch",
+    "czarnuh",
+    "churka",
+    "pidor",
+    "pidar",
+    "pidr",
+    "gomosek",
+    "cwel",
+    "baitola",
+    "maricon",
+    "gotveren",
+    "gotoglani",
+    "mongoloid",
+    "hitler",
+    "gitler",
+    "zitler",
+    "adolfh",
+    "himler",
+    "fuhrer",
+    "fuehrer",
+    "siegheil",
+    "zighael",
+    "goebbels",
+    "mengele",
+    "mussolini",
+    "jewhunt",
+    "jewshunt",
+    "nigahunt",
+    "zenciav",
+    "natehig",
+    "binladen",
+    "benladen",
+    "rapist",
+    "molester",
 ];
 /// short words that match only as a part of the name on its own
-pub const WHOLE: &[&str] = &["fag", "dyke", "coon", "spic", "paki", "kike", "gook", "chink"];
+pub const WHOLE: &[&str] = &[
+    "fag", "dyke", "coon", "spic", "paki", "kike", "gook", "chink", "niga", "nyga", "ngga", "neger", "xach", "xoxol", "hohol", "ukrop",
+    "pider", "pedik", "nazi", "taliban", "rape",
+];
+/// a name with these digits in a row in it is one too (the neo-Nazi code)
+const CODE: &[char] = &['1', '4', '8', '8'];
 
 /// The digits and signs that stand for letters, and those letters, by position.
 const FROM: &[u8; 15] = b"01!|l34@5$7+698";
@@ -303,6 +351,9 @@ impl Letters {
 /// names.mjs `blockedName(name)`: the name reads as a slur (above)
 pub fn blocked_name(name: &str) -> bool {
     let str = read(name);
+    if str.windows(CODE.len()).any(|w| w == CODE) {
+        return true;
+    }
     // s: all the name's letters; t: the part being read
     let (mut s, mut t) = (Letters::new(), Letters::new());
     // the part before was "van"; the last letter (not a digit or sign read as one) was a small one

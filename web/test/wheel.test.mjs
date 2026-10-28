@@ -373,3 +373,41 @@ test('the shifter through the poller: a move into third, the right paddle for a 
     p.dispose();
   });
 });
+
+test('a controller first seen with its left stick pushed (Chrome shows one then) steers: the left stick is always one', async () => {
+  const G2 = await load('web/src/input/gamepad.ts', '\n// a page for the left stick');
+  await withPads(async (pads) => {
+    const buf = new SharedArrayBuffer(4096), h = new Int32Array(buf), f = new Float32Array(buf), logs = [];
+    const lx = () => f[P.IM_PAD_AXIS + P.PAD_AXIS_LX], rx = () => f[P.IM_PAD_AXIS + P.PAD_AXIS_RX];
+    // a USB pad by usage: the left stick X Y pushed right, a trigger on Rx (3) let go at -1, the hat switch on 9
+    const pad = fakePad('USB Gamepad (Vendor: 0079 Product: 0011)', 0, '', [1, 0, 0, -1, 0, 0, 0, 0, 0, H], 12);
+    pads.push(pad);
+    const p = new G2.PadPoller(h, new Uint8Array(buf), 0, () => {}, s => logs.push(s));
+    p.poll();
+    assert.equal(lx(), 1);
+    pad.axes[0] = -0.5; p.poll();
+    assert.equal(lx(), -0.5);
+    pad.axes[2] = 0.25; p.poll();
+    assert.deepEqual([rx(), f[P.IM_PAD_AXIS + P.PAD_AXIS_RY]], [0.25, 0]);   // the trigger at an end: still no stick
+    assert.match(logs.at(-1), /read as if it had one, but for axes 3 \(at an end: no stick\), the D-pad on axis 9$/);
+    p.dispose();
+  });
+  // Chrome on Android, a controller it has no mapping for (a player's report: the left stick did not steer)
+  await withPads(async (pads) => {
+    navigator.userAgent = 'Mozilla/5.0 (Linux; Android 15; 24117RK2CG) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36';
+    const buf = new SharedArrayBuffer(4096), h = new Int32Array(buf), f = new Float32Array(buf), logs = [];
+    const std = fakePad('Xbox Wireless Controller (STANDARD GAMEPAD Vendor: 045e Product: 0b13)', 0, 'standard', [0, 0, 0, 0], 17);
+    const pad = fakePad('Gamepad (Vendor: 3537 Product: 1053)', 1, '', [0, 0, 0, 0], 16);
+    pads.push(std, pad);
+    const p = new G2.PadPoller(h, new Uint8Array(buf), 0, () => {}, s => logs.push(s));
+    p.poll();
+    assert.equal(G2.drivingPad(), std);
+    pad.axes[0] = -1; pad.axes[3] = 1; pressOn(pad, 2); p.poll();   // X on it, the sticks pushed: it drives, as it comes
+    assert.equal(G2.drivingPad(), pad);
+    assert.deepEqual([h[P.IM_PAD_BUTTONS], f[P.IM_PAD_AXIS + P.PAD_AXIS_LX], f[P.IM_PAD_AXIS + P.PAD_AXIS_RY]], [bit(P.PAD_X), -1, 1]);
+    pressOn(pad, 2, false); pad.axes[0] = 0.5; pad.axes[3] = 0; pressOn(pad, 12); p.poll();
+    assert.deepEqual([h[P.IM_PAD_BUTTONS], f[P.IM_PAD_AXIS + P.PAD_AXIS_LX]], [bit(P.PAD_DUP), 0.5]);
+    assert.ok(logs.some(s => /read as it is: Android put it/.test(s)));
+    p.dispose();
+  });
+});

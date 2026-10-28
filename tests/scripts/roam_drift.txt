@@ -44,6 +44,7 @@
 +12   log SHOT counting
 +600wms log SHOT drift
 +0    expect i:0x861e74 == 0             # the career's bank: drift points are not money
++0    expect i:0x7ed344 == 0             # the music's attenuation: free roam's song plays on (a drift race: 0x7FFF)
 +60   up UP
 +0    down DOWN
 +180  up DOWN

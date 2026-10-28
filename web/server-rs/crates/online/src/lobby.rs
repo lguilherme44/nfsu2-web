@@ -1107,6 +1107,9 @@ impl Core {
             let d = if i == 0 { own.to_string() } else { rand::int(1000, 10000).to_string() };
             let cut = format!("{}{d}", jsx::slice16(name, 15 - d.len()));
             let v = if nfsu2_names::blocked_name(&cut) { format!("Player{d}") } else { cut };
+            if nfsu2_names::blocked_name(&v) {
+                continue; // digits that are no name either (1488): other ones
+            }
             self.give_way(&v, s);
             if !self.name_taken(&v, s) {
                 return Some(v);

@@ -35,7 +35,7 @@ function profile(name, { money = 1000, stale = false } = {}) {
   f.writeUInt32LE(54966, 4); f.writeUInt32LE(8, 8); f.writeUInt32LE(54930, 12);
   f.writeUInt32LE(0x10D, 28); f.writeUInt32LE(54930, 32);
   f.write(name, B + 53761, 'latin1');
-  f.writeUInt32LE(money, B + 100);
+  f.writeUInt32LE(money, 0xA16A);
   if (!stale) {
     f.writeUInt32LE(P.checksum(f.subarray(28, 36)), 16); f.writeUInt32LE(P.checksum(f.subarray(36)), 20); f.writeUInt32LE(P.checksum(f.subarray(0, 24)), 24);
   }
@@ -188,7 +188,7 @@ function browser(srv, link = null) {
   };
   b.sync = new V.VaultSync(b.deps);
   b.sync.onTaken = () => b.taken++;
-  b.money = n => new DataView(b.files.get(n).buffer, b.files.get(n).byteOffset).getUint32(B + 100, true);
+  b.money = n => new DataView(b.files.get(n).buffer, b.files.get(n).byteOffset).getUint32(0xA16A, true);
   return b;
 }
 
@@ -279,6 +279,70 @@ test('a conflict, settled either way; the same change on both sides is none', as
   assert.equal(b.sync.link.rev, a.sync.link.rev);
 });
 
+test('a send the server kept but never answered is this browser\'s own: no conflict (issue 33)', async () => {
+  const srv = server(), a = browser(srv), b = browser(srv);
+  seed(a, 1000);
+  const phrase = await a.sync.create();
+  const got = await b.sync.peek(phrase);
+  for (const e of await unzip(got.zip)) b.files.set(e.name, e.data);
+  await b.sync.adopt(phrase, got.remote);
+  // the server keeps what x sends, but its answer never comes (a timeout, a frozen page)
+  const lost = async (u, i) => { const r = await srv.fetch(u, i); if (i?.method === 'PUT') throw new TypeError('fetch failed'); return r; };
+  const save = async (x, money, fetch = srv.fetch) => {
+    srv.now += 60_000;
+    x.files.set(at('THOM'), profile('THOM', { money }));
+    x.deps.fetch = fetch;
+    try { await x.sync.push(); } finally { x.deps.fetch = srv.fetch; }
+  };
+  const reloaded = x => { const y = browser(srv, x.link); y.files = x.files; return y; };
+  const rev = () => [...srv.kept.values()][0].cur.rev;
+  await assert.rejects(save(a, 2000, lost));
+  assert.equal(a.sync.state.code, 'VAULT-NO-ANSWER');
+  assert.equal(a.sync.link.sent.length, 1);
+  // the next save goes over it: no conflict, and nothing left unanswered
+  await save(a, 3000);
+  assert.equal(a.sync.state.s, 'synced');
+  assert.equal(a.sync.link.sent, undefined);
+  await b.sync.pull();
+  assert.equal(b.money(at('THOM')), 3000);
+  // twice unanswered (the second over the first), then the page reloaded with a save since: it follows its own and sends
+  await assert.rejects(save(a, 4000, lost));
+  await assert.rejects(save(a, 5000, lost));
+  a.files.set(at('THOM'), profile('THOM', { money: 6000 }));
+  const a2 = reloaded(a);
+  await a2.sync.pull();
+  assert.equal(a2.sync.state.s, 'synced');
+  await a2.sync.push();
+  assert.equal(a2.sync.state.s, 'synced');
+  await b.sync.pull();
+  assert.equal(b.money(at('THOM')), 6000);
+  // unanswered, and the same files kept since: linked at the next look, nothing sent again
+  await assert.rejects(save(a2, 7000, lost));
+  const kept = rev(), a3 = reloaded(a2);
+  await a3.sync.pull(); await a3.sync.push();
+  assert.equal(a3.sync.state.s, 'synced');
+  assert.equal(rev(), kept);
+  // unanswered, then the files went back to what was synced: sent again, so the server does not keep the other
+  const back = a3.files.get(at('THOM'));
+  await assert.rejects(save(a3, 7500, lost));
+  a3.files.set(at('THOM'), back);
+  await a3.sync.push();
+  assert.equal(a3.sync.state.s, 'synced');
+  assert.equal(a3.sync.link.sent, undefined);
+  await b.sync.pull();
+  assert.equal(b.money(at('THOM')), 7000);
+  // another browser's version is still a conflict, with both sides' profiles
+  await save(b, 8000);
+  const theirs = rev();
+  await assert.rejects(save(a3, 9000, lost));
+  assert.equal(rev(), theirs);                                    // the server refused it: b's is there
+  await save(a3, 10000);
+  assert.deepEqual([a3.sync.state.s, a3.sync.state.why], ['conflict', 'both']);
+  const st = a3.sync.state;
+  assert.deepEqual([st.here.profiles, st.cloud.profiles, st.cloud.saved], [[{ name: 'THOM', money: 10000 }], [{ name: 'THOM', money: 8000 }], st.theirs.saved]);
+  assert.equal(a3.money(at('THOM')), 10000);
+});
+
 test('no profile here is never sent by itself; a torn profile waits; the copy of an earlier day', async () => {
   const srv = server(), a = browser(srv);
   seed(a, 1000);
@@ -298,7 +362,7 @@ test('no profile here is never sent by itself; a torn profile waits; the copy of
   assert.equal(a.sync.link.earlier, srv.now - DAY);
   const e = await a.sync.peek(a.sync.link.phrase, true);
   const prof = (await unzip(e.zip)).find(x => x.name === at('THOM')).data;
-  assert.equal(new DataView(prof.buffer, prof.byteOffset).getUint32(B + 100, true), 1500);
+  assert.equal(new DataView(prof.buffer, prof.byteOffset).getUint32(0xA16A, true), 1500);
   // the profiles gone here (cleared storage): nothing sent; the keyphrase's come back
   a.files.delete(at('THOM'));
   await a.sync.push();

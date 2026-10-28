@@ -17,10 +17,19 @@
 //    a part of the name on its own, and plural: the parts are split where a character is no letter and where a
 //    capital follows a small letter, digits and signs read as letters between them or not ("f4g_42", "XxCoonXx",
 //    "Big1Fag"); the name's letters together count as one too ("F A G").  "Dyke" after "Van" is the surname.
+// The other offensive names go the same way (picked from the live server's names, 2026-10-26): Nazi ones, hate
+// aimed at a group, terror, sexual violence; and a name with 1488 in it (the neo-Nazi code).  A swear word is no
+// such name.
 export const SLURS = Object.freeze({
   anywhere: Object.freeze(['nigg', 'niqq', 'faggot', 'tranny', 'trannie', 'retard', 'ibne', 'wetback', 'beaner',
-    'raghead', 'towelhead', 'chingchong', 'jigaboo', 'porchmonkey', 'junglebunny']),
-  whole: Object.freeze(['fag', 'dyke', 'coon', 'spic', 'paki', 'kike', 'gook', 'chink']),
+    'raghead', 'towelhead', 'chingchong', 'jigaboo', 'porchmonkey', 'junglebunny',
+    'nibba', 'nigus', 'nygga', 'kneegro', 'wigga', 'meganiga', 'czarnuch', 'czarnuh', 'churka',
+    'pidor', 'pidar', 'pidr', 'gomosek', 'cwel', 'baitola', 'maricon', 'gotveren', 'gotoglani', 'mongoloid',
+    'hitler', 'gitler', 'zitler', 'adolfh', 'himler', 'fuhrer', 'fuehrer', 'siegheil', 'zighael', 'goebbels',
+    'mengele', 'mussolini', 'jewhunt', 'jewshunt', 'nigahunt', 'zenciav', 'natehig', 'binladen', 'benladen',
+    'rapist', 'molester']),
+  whole: Object.freeze(['fag', 'dyke', 'coon', 'spic', 'paki', 'kike', 'gook', 'chink',
+    'niga', 'nyga', 'ngga', 'neger', 'xach', 'xoxol', 'hohol', 'ukrop', 'pider', 'pedik', 'nazi', 'taliban', 'rape']),
 });
 
 const LOOKALIKE = {
@@ -76,6 +85,7 @@ function whole(t, words) {
 /** name reads as a slur (above) */
 export function blockedName(name) {
   const str = [...String(name ?? '').normalize('NFKD').replace(/\p{M}/gu, '')].map(ch => LOOKALIKE[ch] ?? ch);
+  if (str.join('').includes('1488')) return true;
   let s = '', t = '', prev = '', low = false;
   for (let i = 0; i <= str.length; i++) {
     const ch = str[i] ?? '';

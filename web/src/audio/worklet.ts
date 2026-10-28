@@ -10,30 +10,33 @@
 // and returns false.  Only a processor that returned false lets Chrome drop
 // its AudioWorkletNode (and the context it belongs to); one that returns true
 // forever keeps both alive as long as the page lives.
+// The ring's size comes from the page (the module's AR_FRAMES; an older
+// module's is AUDIO_RING_FRAMES_OLD).
 import {
-  AR_HDR_WORDS, AR_LOUD, AR_OFF_PCM, AR_QUANTA, AR_R, AR_UNDERRUNS, AR_W, AUDIO_RATE, AUDIO_RING_FRAMES,
+  AR_HDR_WORDS, AR_LOUD, AR_OFF_PCM, AR_QUANTA, AR_R, AR_UNDERRUNS, AR_W, AUDIO_RATE, AUDIO_RING_FRAMES_OLD,
 } from './proto';
 
 // AudioWorkletGlobalScope (TypeScript ships no lib for it)
 declare const sampleRate: number;
 declare class AudioWorkletProcessor { readonly port: MessagePort; constructor(options?: unknown); }
 declare function registerProcessor(name: string, ctor: new (options: { processorOptions: Opts }) => AudioWorkletProcessor): void;
-interface Opts { buf: SharedArrayBuffer; ptr: number }
+interface Opts { buf: SharedArrayBuffer; ptr: number; frames?: number }
 
-const MASK = AUDIO_RING_FRAMES - 1;
 const SILENT = 1 / 32768;
 
 class NfsuOut extends AudioWorkletProcessor {
   private h: Int32Array | null;
   private pcm: Float32Array | null;
   private step: number;
+  private frames: number;
   private frac = 0;               // resampling: position between ring frames r and r+1
 
   constructor(o: { processorOptions: Opts }) {
     super();
-    const { buf, ptr } = o.processorOptions;
+    const { buf, ptr, frames } = o.processorOptions;
+    this.frames = frames ?? AUDIO_RING_FRAMES_OLD;
     this.h = new Int32Array(buf, ptr, AR_HDR_WORDS);
-    this.pcm = new Float32Array(buf, ptr + AR_OFF_PCM, AUDIO_RING_FRAMES * 2);
+    this.pcm = new Float32Array(buf, ptr + AR_OFF_PCM, this.frames * 2);
     this.step = AUDIO_RATE / sampleRate;
     this.port.onmessage = (e: MessageEvent) => { if (e.data === 'stop') { this.h = null; this.pcm = null; } };
   }
@@ -48,12 +51,12 @@ class NfsuOut extends AudioWorkletProcessor {
     }
     const out = outputs[0];
     if (!out || !out.length) return true;
-    const L = out[0], R = out[1] ?? out[0], n = L.length;
+    const L = out[0], R = out[1] ?? out[0], n = L.length, MASK = this.frames - 1;
     Atomics.add(h, AR_QUANTA, 1);
     const w = Atomics.load(h, AR_W);
     let r = Atomics.load(h, AR_R);
     let avail = (w - r) >>> 0;
-    if (avail > AUDIO_RING_FRAMES) avail = 0;
+    if (avail > this.frames) avail = 0;
     let peak = 0, k = 0;
     if (this.step === 1) {
       k = Math.min(n, avail);

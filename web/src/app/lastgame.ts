@@ -4,7 +4,7 @@
 // every 10 s when the log grew, at once when the page is hidden or shown, and with the game's end.  The next page finds
 // a game that never got to its end and offers that copy with Download log (shell.ts).  Each copy also notes what the
 // game held then (its textures, friends' cars): Safari gives the page no memory figure, and the renderer's line comes
-// only once a minute.
+// only once a minute.  The copy is kept as it would leave the browser (privacy.ts scrub): no names, no addresses.
 import type { LogRing } from './logs';
 
 export interface LastGame {
@@ -16,6 +16,8 @@ export interface LastGame {
   /** how it ended: the exit code and why ('exit', a stop's code, 'page closed'); null: it did not get to an end */
   ended: { code: number; why: string } | null;
   log: string;
+  /** the log went through privacy.ts scrub (copies of pages before it did not) */
+  scrubbed?: boolean;
   /** what the game held at that copy, "textures 412 MB (380 unpacked from DXT), 19 friends' cars, ..." ('': nothing known) */
   held?: string;
 }
@@ -31,7 +33,8 @@ export class LastGameKeeper {
   private written = -1;
   private failed = false;
   private held: () => string = () => '';
-  constructor(private save: string, private log: LogRing, private note: (s: string) => void) {}
+  /** scrub: the log as it may leave the browser (privacy.ts) */
+  constructor(private save: string, private log: LogRing, private note: (s: string) => void, private scrub?: (text: string) => string) {}
 
   /** a game started: a copy now, then every EVERY_MS while the log grows; held: what the game holds now, for each copy */
   start(rev: string, held?: () => string) {
@@ -57,7 +60,9 @@ export class LastGameKeeper {
 
   private write() {
     const r = this.rec!;
-    r.saved = Date.now(); r.log = this.log.snapshot(BUDGET); this.written = this.log.added;
+    r.saved = Date.now(); this.written = this.log.added;
+    r.log = this.log.snapshot(BUDGET);
+    if (this.scrub) { r.log = this.scrub(r.log); r.scrubbed = true; }
     // the copy at the end may come after the renderer went: the last figures seen then
     try { r.held = this.held() || r.held || ''; } catch { /* the last ones */ }
     try { localStorage.setItem(KEY + this.save, JSON.stringify(r)); }

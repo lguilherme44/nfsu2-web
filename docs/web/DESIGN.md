@@ -175,7 +175,9 @@ renderer, AudioWorklet sound, keyboard, mouse and pad input, and free roam over 
     names or none), `game.json` and the manifest in Cache Storage, network first: the server's answer when
     there is one (the copy replaced when its ETag changes; after each start page from the server the workers and the
     manifest are brought up to date too, so the copies are one version), the copies when it fails, answers 5xx or
-    keeps the start page waiting 4 s, and then for 30 s first. Nothing else passes through it. At Play the page asks
+    keeps the start page waiting 4 s, and then for 30 s first, whatever the server answers meanwhile (one start, one
+    set: a script from a copy beside the server's `game.json` cannot draw the server's module). Nothing else passes
+    through it. At Play the page asks
     the server (`/players`, 2 s); without an answer the movies are off for that game unless all of them are cached.
   - A newer version: the module stays loaded while the page is open, through every game it plays, and a page can
     start from the offline copies of the version before (a deploy restarts the server while its players reload). The
@@ -187,6 +189,11 @@ renderer, AudioWorklet sound, keyboard, mouse and pad input, and free roam over 
     server answers (so the reload is not the copies'); in a game it says so over the game once; otherwise it offers
     Reload, and Play reloads too. sessionStorage names the revision a reload was for, so one that came back without
     it only offers it. A page with test settings in its address only offers it.
+  - A page of another build than its module (the renderer finds the game's GPU control block of another layout,
+    `OtherBuild`: the page's script a copy and the module the server's, or a page loaded while a deploy swapped the
+    module): the game is stopped and the page reloaded with the service worker unregistered, so no copy answers it
+    (the page registers it again, and its install takes new copies). Once a tab and revision, while the server
+    answers; after that the renderer did not start (`GPU-RENDERER`), as for any other reason.
   - `/save`: OPFS save overlay. Holds saves, `registry.txt`, `settings.ini` and logs. Reads look there first, but
     for the game folder's own folders (`TRACKS`, `CARS`, ...) once until the next write (`runtime/fileio.c`): each
     look is OPFS calls in the I/O worker, 1.5 to 2 ms an open with the GIL held, and a race streams its track by
@@ -295,7 +302,10 @@ The game thread keeps `com.c` (D3D9 state, shader translation) and records throu
   (`gpu_web.c` `metal_read_texture`). When the game's device size is
   the canvas's (the usual case) the frame draws its screen straight into the canvas texture: no back buffer and no
   composite pass. A frame that copies from the screen before drawing to it keeps the back buffer (it reads the
-  previous frame); none of the checked scenes did. `?direct=0` on the test page turns the direct path off.
+  previous frame); none of the checked scenes did. Firefox keeps the back buffer too: it shows the canvas texture
+  while the next frame draws into it, so drawn straight in, frames showed half drawn and partly black (Firefox 158 on
+  a Mac: 3 of 25 race screenshots, none from the back buffer). `?direct=0` / `?direct=1` on the test page turns the
+  direct path off or on.
 - DXT textures stay BC on the GPU. A GPU without `texture-compression-bc` (PowerVR and Mali phones) gets them unpacked
   to BGRA8 as they upload (`web/src/gpu/dxt.ts`). Measured on a Quick Race (Resort Loop) with a desktop CPU: about
   7× the texture memory (30 MB packed, 213 MB unpacked) and about 0.4 s of page-thread work, all of it in the menus

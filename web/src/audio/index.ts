@@ -15,16 +15,17 @@
 //     click or key press, e.g. the Play click.
 //   - Latency: the ring holds 512-1024 frames (12-23 ms; the pump raises it
 //     after underruns and lowers it again after 20 s without one) on top of
-//     the context's own output latency.
+//     the context's own output latency; with a context that renders in big
+//     bursts (some phones: ~30 quanta every 90 ms) one burst and a slice.
 //   - Hidden page: the output fades to silence (the game itself parks and
 //     mutes when it loses focus); optionally the context is suspended.
 //   - autotest "audioreset": the pump bumps AR_RESET and the context is rebuilt.
 import type { GameProcess } from '../host/process';
 import { HostKind } from '../host/abi';
 import {
-  AR_CTX, AR_CTX_CLOSED, AR_CTX_RUNNING, AR_CTX_SUSPENDED, AR_HDR_WORDS, AR_LOUD, AR_MAGIC, AR_MIXED, AR_MODE, AR_MUTED,
-  AR_NOSOUND, AR_PAGE_RATE, AR_PEAK, AR_QUANTA, AR_R, AR_RESET, AR_RMS, AR_TARGET, AR_UNDERRUNS, AR_VERSION, AR_W,
-  AR_WALL_MS, AUDIO_MAGIC, AUDIO_RATE, AUDIO_VERSION,
+  AR_CTX, AR_CTX_CLOSED, AR_CTX_RUNNING, AR_CTX_SUSPENDED, AR_FRAMES, AR_HDR_WORDS, AR_LOUD, AR_MAGIC, AR_MIXED, AR_MODE, AR_MUTED,
+  AR_NOSOUND, AR_OFF_PCM, AR_PAGE_FRAMES, AR_PAGE_RATE, AR_PEAK, AR_QUANTA, AR_R, AR_RESET, AR_RMS, AR_TARGET, AR_UNDERRUNS,
+  AR_VERSION, AR_W, AR_WALL_MS, AUDIO_MAGIC, AUDIO_RATE, AUDIO_RING_FRAMES, AUDIO_RING_FRAMES_OLD, AUDIO_VERSION,
 } from './proto';
 
 export interface AudioOptions {
@@ -135,9 +136,15 @@ export async function attachAudio(proc: GameProcess, opts: AudioOptions = {}): P
     gain = c.createGain(); gain.gain.value = audible(); gain.connect(c.destination);
     const connect = () => {
       if (!ring || node || ctx !== c) return;
+      // the module's ring size (an older module's is AUDIO_RING_FRAMES_OLD), told
+      // to the pump before the context reads as running
+      const f = h ? Atomics.load(h, AR_FRAMES) : 0;
+      const frames = f >= AUDIO_RING_FRAMES_OLD && f <= AUDIO_RING_FRAMES && !(f & (f - 1)) && AR_OFF_PCM + f * 8 <= ring.size
+        ? f : AUDIO_RING_FRAMES_OLD;
+      if (h) Atomics.store(h, AR_PAGE_FRAMES, frames);
       node = new AudioWorkletNode(c, 'nfsu2-out', {
         numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2],
-        processorOptions: { buf: proc.memory.buffer as unknown as SharedArrayBuffer, ptr: ring.ptr },
+        processorOptions: { buf: proc.memory.buffer as unknown as SharedArrayBuffer, ptr: ring.ptr, frames },
       });
       node.connect(gain!);
       if (h) Atomics.store(h, AR_PAGE_RATE, c.sampleRate | 0);

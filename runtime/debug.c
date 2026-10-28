@@ -100,6 +100,7 @@ void guest_hook(CPU *c, uint32_t ip){
     { int powerunits_hook(CPU *, uint32_t); if (powerunits_hook(c, ip)) return; }
     { int regional_hook(CPU *, uint32_t); if (regional_hook(c, ip)) return; }
     { int sndlead_hook(CPU *, uint32_t); if (sndlead_hook(c, ip)) return; }
+    { int drift_hook(CPU *, uint32_t); if (drift_hook(c, ip)) return; }
     if (ip == 0x0065ae25u){
         uint32_t a1=MR32(c->esp+4u), a2=MR32(c->esp+8u), a3=MR32(c->esp+12u);
         if (!g_rec_esp0) g_rec_esp0 = c->esp;

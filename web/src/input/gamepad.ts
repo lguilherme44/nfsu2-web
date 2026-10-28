@@ -15,7 +15,10 @@
 // controller is read through its known layout (hidpad.ts: 8BitDo's), or else
 // as if it had the standard mapping, but for an axis resting at an end when
 // it showed up (a pedal, a throttle, a trigger), which is no stick.  Chrome
-// exposes a controller only after a button press on the page.
+// on Android gives every controller the standard mapping's places, called
+// standard or not (androidLayout): those are read as they come.  Chrome
+// exposes a controller only after a button press on the page, or a stick
+// pushed past half way.
 //
 // Rumble goes the other way: runtime/dinput_pad.c plays the game's
 // force-feedback effects as two motor levels in the mailbox, updated every
@@ -103,25 +106,44 @@ export function mapHid(g: Gamepad, r: HidPadReader): PadSnapshot {
   return { connected: true, buttons, axes, family, name, index: g.index };
 }
 
+/**
+ * Whether a controller without the standard mapping has its places all the same: Chrome on Android reads every
+ * controller through Android's key codes and puts its buttons and sticks where the standard mapping has them (the
+ * sticks on axes 0 to 3, the triggers buttons 6 and 7, the D-pad buttons 12 to 15), but calls one it knows no mapping
+ * for not standard ("8BitDo Ultimate 2 Wireless (Vendor: 2dc8 Product: 6012)", mapping "").  Read through the 8BitDo
+ * layout (hidpad.ts: its HID report's order) such a pad had only A and B in place and its D-pad opened the page's menu
+ * (a player's report: nothing worked from one day to the next).  Chrome on a big tablet asks for desktop websites and
+ * says Linux: there it shows by Chrome's id with Android's 16 buttons (17 with Home) on a touch screen.
+ */
+export function androidLayout(g: Gamepad): boolean {
+  if (g.mapping === 'standard') return false;
+  const ua = navigator.userAgent ?? '';
+  if (/Android/.test(ua)) return true;
+  return /X11; Linux/.test(ua) && (navigator.maxTouchPoints ?? 0) > 0 && /\(Vendor: [0-9a-f]{4} Product: [0-9a-f]{4}\)$/i.test(g.id) &&
+    (g.buttons.length === 16 || g.buttons.length === 17) && g.axes.length < 10;
+}
+
 /** the controller driving the game's pad (null: no game, or no controller); PAD_DRIVER_EVENT on the window when
  *  another one does (the Controls sheet shows that one) */
 let driver: { index: number; id: string } | null = null;
 export const PAD_DRIVER_EVENT = 'nfsu2-pad-driver';
-/** whether a controller may drive the pad while others are connected: the standard mapping, a steering wheel, or an
- *  8BitDo pad (hidpad.ts) */
-export const mayDrive = (g: Gamepad | null) => !!g && (g.mapping === 'standard' || !!wheelOf(g.id) || !!eightBitDoFace(g.id));
+/** whether a controller may drive the pad while others are connected: the standard mapping (Chrome on Android's
+ *  too), a steering wheel, or an 8BitDo pad (hidpad.ts) */
+export const mayDrive = (g: Gamepad | null) => !!g &&
+  (g.mapping === 'standard' || !!wheelOf(g.id) || !!eightBitDoFace(g.id) || androidLayout(g));
 export function drivingPad(): Gamepad | null {
   if (!driver) return null;
   try { const g = navigator.getGamepads?.()[driver.index]; return g?.connected && g.id === driver.id ? g : null; }
   catch { return null; }
 }
 
-/** what the poller knows of the controller driving the pad: its axes when it showed up; if it is a wheel, the model,
- *  how it makes the pad, the axis of its D-pad, its shifter and what the player picked for that; if it is an 8BitDo
- *  pad without the standard mapping, its reader */
+/** what the poller knows of the controller driving the pad: whether it has the standard mapping's places (std: its
+ *  own, or Chrome on Android's), its axes when it showed up; if it is a wheel, the model, how it makes the pad, the
+ *  axis of its D-pad, its shifter and what the player picked for that; if it is an 8BitDo pad without the standard
+ *  mapping, its reader */
 interface Seen {
-  index: number; id: string; axes0: number[]; ends: Set<number>; wheel: WheelInfo | null; map: WheelMap | null; hat: number;
-  shifter: Shifter; mode: ShifterMode; hid: HidPadReader | null;
+  index: number; id: string; std: boolean; axes0: number[]; ends: Set<number>; wheel: WheelInfo | null; map: WheelMap | null;
+  hat: number; shifter: Shifter; mode: ShifterMode; hid: HidPadReader | null;
 }
 
 /**
@@ -152,6 +174,9 @@ export interface PadPage {
   /** the right stick (x, y: -1..1, +y down) each time the controller is read while no dialog is open (quick chat's
    *  picker); true: the page uses it now, the game gets it at rest */
   stick?(x: number, y: number): boolean;
+  /** the whole controller each time it is read while no dialog is open (photo mode: runtime/photo.c), with the
+   *  buttons pressed since the last read; true: the page has it now, the game gets it at rest */
+  capture?(s: PadSnapshot, pressed: number): boolean;
 }
 
 /** the touch controls' share of the pad (web/src/app/touch.ts): PAD_* button bits and the left stick's x */
@@ -305,27 +330,32 @@ export class PadPoller {
   }
 
   /** the controller driving the pad as the pad: a wheel through its layout (the model's, with the player's set-up
-   *  over it, or the guess from how it showed up) and its shifter, one in the standard mapping as it is, an 8BitDo pad
-   *  through its known layout, any other as if it had the standard mapping, but for the axes that rested at an end when
-   *  it showed up, and with Chrome's hat switch as its D-pad */
+   *  over it, or the guess from how it showed up) and its shifter, one in the standard mapping's places as it is, an
+   *  8BitDo pad through its known layout, any other as if it had the standard mapping, but for the axes that rested at
+   *  an end when it showed up, and with Chrome's hat switch as its D-pad.  The first two axes (the left stick, in
+   *  every browser's placement) are always a stick: Chrome shows a controller once a stick is pushed past half way,
+   *  so it may sit at an end then, and it steered nothing until a reload. */
   private read(g: Gamepad): PadSnapshot {
     let k = this.seen;
     if (!k || k.index !== g.index || k.id !== g.id) {
       const wheel = wheelOf(g.id), axes0 = axesWhenSeen(g, wheel), face = eightBitDoFace(g.id);
+      const std = g.mapping === 'standard' || (!wheel && androidLayout(g));
       const ends = new Set<number>();
-      axes0.forEach((v, i) => { if (Math.abs(v) >= 0.9 && Math.abs(v) <= 1.05) ends.add(i); });
-      const hid = !wheel && face && g.mapping !== 'standard' ? new HidPadReader(face, axes0) : null;
-      k = this.seen = { index: g.index, id: g.id, axes0, ends, wheel, map: null, hat: findHat(axes0), shifter: new Shifter(), mode: 'off', hid };
+      if (!std) axes0.forEach((v, i) => { if (i > 1 && Math.abs(v) >= 0.9 && Math.abs(v) <= 1.05) ends.add(i); });
+      const hid = !wheel && face && !std ? new HidPadReader(face, axes0) : null;
+      k = this.seen = { index: g.index, id: g.id, std, axes0, ends, wheel, map: null, hat: std ? -1 : findHat(axes0),
+        shifter: new Shifter(), mode: 'off', hid };
       if (g.mapping !== 'standard') {
         this.log(`[pad] ${g.id}: no standard mapping in this browser; ${g.axes.length} axes at ` +
           `[${axes0.map(v => v.toFixed(2)).join(' ')}], ${g.buttons.length} buttons`);
         if (hid) this.log(`[pad] read as ${hid.describe()}`);
+        else if (std) this.log('[pad] read as it is: Android put it in the standard mapping\'s places');
         else if (!k.wheel) this.log(`[pad] read as if it had one${ends.size ? `, but for axes ${[...ends].join(', ')} (at an end: no stick)` : ''}` +
           `${k.hat >= 0 ? `, the D-pad on axis ${k.hat}` : ''}`);
       }
     }
     if (k.hid) return mapHid(g, k.hid);
-    if (k.hat < 0 && g.mapping !== 'standard') {
+    if (k.hat < 0 && !k.std) {
       k.hat = findHat(g.axes);
       if (k.hat >= 0) this.log(`[pad] ${g.id}: the D-pad on axis ${k.hat}`);
     }
@@ -339,8 +369,8 @@ export class PadPoller {
       }
       return mapWheel(g, k.map, k.hat, k);
     }
-    const s = mapStandard(g, g.mapping === 'standard' ? undefined : k.ends);
-    if (g.mapping !== 'standard' && k.hat >= 0) s.buttons |= hatDirs(g.axes[k.hat]);
+    const s = mapStandard(g, k.std ? undefined : k.ends);
+    if (!k.std && k.hat >= 0) s.buttons |= hatDirs(g.axes[k.hat]);
     return s;
   }
 
@@ -363,6 +393,10 @@ export class PadPoller {
     const tap = now < this.tapUntil ? this.tap : 0;
     const dirs = stickDirs(s.axes[PAD_AXIS_LX], s.axes[PAD_AXIS_LY], this.stick), turned = dirs & ~this.stick;
     this.stick = dirs;
+    if (!page.dialog() && !menu && page.capture?.(s, pressed)) {
+      this.held = s.buttons;
+      return { ...s, buttons: 0, axes: [0, 0, 0, 0, 0, 0] };
+    }
     if (!page.dialog()) {
       this.held &= s.buttons;
       const buttons = (s.buttons & ~this.held & ~wait) | tap;

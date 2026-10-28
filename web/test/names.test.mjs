@@ -19,8 +19,13 @@ const BLOCKED = ['nigger', 'N1gg3r', 'n i g g e r', 'n.i.g.g.a', 'NiQQa', 'nlgga
   'FAG', 'f4g', 'F A G', 'f4g_42', 'XxFagXx', 'fags', 'Faaag', 'faggot', 'f@gg0t', 'fa66ot', 'tr4nny', 'Trannie', 'r3tard',
   'ibne', 'iBnE_34', 'wetback', 'beaner', 'Ch1nk', 'g00k', 'sp1cs', 'paki', 'k1ke', 'dyke', 'c00n', 'XxCoonXx',
   'towelhead', 'sandnigger', 'junglebunny', 'ni99a', 'NI99A', 'nigga99', 'Fag42', 'Big1Fag', 'Mr5Coon', 'trannies',
-  'Dykes', 'Van_Fag'];
-const UNICODE = ['ñigga', 'nіgga', 'ｎｉｇｇａ', 'ΝΙGGΑ', 'n̲i̲g̲g̲a̲', 'ⓕⓐⓖ', 'fаg'];
+  'Dykes', 'Van_Fag',
+  // the other offensive names (the live server's, 2026-10-26), 1488 in a name
+  'Hitler', 'Hitler3858', 'adolfhitler', 'AdolfH', 'H1tl3r', 'gitler', 'Himmler', 'zigHael', 'NAZZI', 'JewsHunter',
+  'nigahunter', 'Niga', 'NigaBoi', 'Nig4', 'MEGANIGA', 'KneeGro', 'CzarnuchJebany', 'CHURKA', 'xoxol', 'pidor',
+  'PIDARAZ', 'vladpidr', 'cwel666', 'gigacwel', 'Mongoloid', 'TALIBAN', 'Et_Binladen', 'samrapist', 'RapeAddict',
+  'ASphaltMolester', '1488', 'Sam1488', 'kkk1488', 'Sam14881488'];
+const UNICODE = ['ñigga', 'nіgga', 'ｎｉｇｇａ', 'ΝΙGGΑ', 'n̲i̲g̲g̲a̲', 'ⓕⓐⓖ', 'fаg', 'Ηitler', 'Ｈｉｔｌｅｒ', 'Lander１４８８'];
 // other words with those letters in them, the player names this server sees most (Turkish) among them
 const ALLOWED = ['Mustafa69', 'MustafaGS', 'Mustafa_GS', 'Mustafa Gamer', 'mustafagamer', 'Rafa96', 'Vefa', 'Safa',
   'Pakize', 'Nigar', 'Niger', 'Nigeria', 'Nigerian', 'Nigel', 'Raccoon', 'Tycoon', 'Cocoon', 'spicy', 'Spice',
@@ -28,7 +33,10 @@ const ALLOWED = ['Mustafa69', 'MustafaGS', 'Mustafa_GS', 'Mustafa Gamer', 'musta
   'Ahmet35', 'Emre_34', 'Gökhan', 'İbrahim', 'Thom', 'Player', 'NAME', 'OLHOST', 'Speedy', '',
   // a name and a number: a year, two digits, the digits the Online mode adds to a taken name (lobby.rs free_variant)
   'Hakan1995', 'Furkan1999', 'Ozan_1996', 'Can 1969', 'Kaan1998', 'Dani99', 'Toni69', 'Dani99GS', 'Ozan1996GS',
-  'Hakan1993TR', 'Dani9912', 'Strannik', 'VanDyke', 'Van Dyke'];
+  'Hakan1993TR', 'Dani9912', 'Strannik', 'VanDyke', 'Van Dyke',
+  // the live names with the new words' letters in them, other numbers with 88
+  'Spider', 'MR.SPIDER', 'Shinigami', 'Zuniga', 'Vlado', 'Ataliba_Neto', 'Grapes', 'Trapezio', 'Adolf', 'Nazim',
+  'Nazif', 'Nygaard', 'Mongol', 'Churkin', 'jacob88', 'Jane8848', 'Ahmet1448'];
 
 test('names.mjs: the lists\' words, the ways round them, and not the other words', () => {
   for (const w of [...SLURS.anywhere, ...SLURS.whole]) assert.ok(blockedName(w), w);
@@ -65,7 +73,7 @@ int main(void){
     const rnd = n => { seed = (seed * 1103515245 + 12345) >>> 0; return (seed >>> 8) % n; };
     const pick = a => a[rnd(a.length)];
     const pieces = [...SLURS.anywhere, ...SLURS.whole, 'mustafa', 'gs', 'raccoon', 'spice', 'niger', 'pakize', 'xx', 'gamer', 'a', 'g',
-      'dani', 'hakan', 'van', '99', '1995', '69'];
+      'dani', 'hakan', 'van', '99', '1995', '69', '1488', '88'];
     const swap = { o: '0', i: '1!|l', e: '3', a: '4@', s: '5$', t: '7+', g: '69q', b: '8' };
     const names = [...BLOCKED, ...ALLOWED.filter(n => /^[ -~]*$/.test(n))];
     for (let k = 0; k < 20000; k++) {

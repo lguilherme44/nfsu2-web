@@ -21,6 +21,10 @@
  *    letters between them or not ("f4g_42", "XxCoonXx", "Big1Fag"); the
  *    name's letters together count as one too ("F A G").  "Dyke" after
  *    "Van" is the surname.
+ * The other offensive names go the same way (picked from the live server's
+ * names, 2026-10-26): Nazi ones, hate aimed at a group, terror, sexual
+ * violence; and a name with 1488 in it (the neo-Nazi code).  A swear word is
+ * no such name.
  * Header only: no state.
  */
 #ifndef NAMES_H
@@ -74,12 +78,19 @@ static inline int name_whole(const char *t, const char *const *words){
 }
 static inline int name_blocked(const char *name){
     static const char *const anywhere[] = { "nigg", "niqq", "faggot", "tranny", "trannie", "retard", "ibne", "wetback", "beaner",
-        "raghead", "towelhead", "chingchong", "jigaboo", "porchmonkey", "junglebunny", 0 };
-    static const char *const whole[] = { "fag", "dyke", "coon", "spic", "paki", "kike", "gook", "chink", 0 };
+        "raghead", "towelhead", "chingchong", "jigaboo", "porchmonkey", "junglebunny",
+        "nibba", "nigus", "nygga", "kneegro", "wigga", "meganiga", "czarnuch", "czarnuh", "churka",
+        "pidor", "pidar", "pidr", "gomosek", "cwel", "baitola", "maricon", "gotveren", "gotoglani", "mongoloid",
+        "hitler", "gitler", "zitler", "adolfh", "himler", "fuhrer", "fuehrer", "siegheil", "zighael", "goebbels",
+        "mengele", "mussolini", "jewhunt", "jewshunt", "nigahunt", "zenciav", "natehig", "binladen", "benladen",
+        "rapist", "molester", 0 };
+    static const char *const whole[] = { "fag", "dyke", "coon", "spic", "paki", "kike", "gook", "chink",
+        "niga", "nyga", "ngga", "neger", "xach", "xoxol", "hohol", "ukrop", "pider", "pedik", "nazi", "taliban", "rape", 0 };
     static const char *const dyke[] = { "dyke", 0 };
     char s[256], t[256], prev[256] = "", w[64];  /* the name's letters; the part it is in; the part before */
     int n = 0, k = 0, low = 0;
     const char *p = name ? name : "";
+    if (strstr(p, "1488")) return 1;
     for (int i = 0; ; i++){
         char ch = p[i];
         int r = 0;

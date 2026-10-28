@@ -675,7 +675,7 @@ static struct { uint32_t msg, wp, lp; } g_wmq[WMQ];
 static int g_wmq_head = 0, g_wmq_tail = 0;
 static int g_wm_activated = 0;
 uint64_t g_wm_sent = 0, g_wm_dispatched = 0;
-void lifecycle_pump(void); int lifecycle_may_park(void);           /* lifecycle.c */
+void lifecycle_pump(void); int lifecycle_may_park(void); int lifecycle_game_parked(void);   /* lifecycle.c */
 void kbd_pump(void);                                               /* keyboard.c */
 
 static void wm_push(uint32_t m, uint32_t wp, uint32_t lp){
@@ -1442,7 +1442,11 @@ int win32_ext_call(CPU *c, const char *n, uint32_t *out){
          * calls it (pump 0x5BF1C0), and where Windows would block too; and
          * not during a LAN session (lifecycle_may_park).  The guest lock is
          * released meanwhile so the audio and timer threads keep running;
-         * the sound output is muted (audio_set_muted). */
+         * the sound output is muted (audio_set_muted) until the game is
+         * active again (lifecycle_pump).  A message that wakes it before
+         * that (a mouse move over the page) runs one frame of an inactive
+         * game, whose streams nothing refills: unmuted, the mixer would play
+         * their stale buffers, a movie's last second over and over. */
         if (remove && !strcmp(n,"GetMessageA") && g_wmq_head == g_wmq_tail && lifecycle_may_park()){
             void audio_set_muted(int);
             audio_set_muted(1);
@@ -1454,7 +1458,7 @@ int win32_ext_call(CPU *c, const char *n, uint32_t *out){
                 if (g_wmq_head != g_wmq_tail || !lifecycle_may_park()) break;
                 guest_yield_begin();
             }
-            audio_set_muted(0);
+            if (!lifecycle_game_parked()) audio_set_muted(0);
         }
         if (g_wmq_head != g_wmq_tail){
             if (remove) wm_pop(&m,&wp,&lp);

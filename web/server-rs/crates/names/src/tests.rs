@@ -53,8 +53,44 @@ pub(crate) const BLOCKED: &[&str] = &[
     "trannies",
     "Dykes",
     "Van_Fag",
+    // the other offensive names (the live server's, 2026-10-26), 1488 in a name
+    "Hitler",
+    "Hitler3858",
+    "adolfhitler",
+    "AdolfH",
+    "H1tl3r",
+    "gitler",
+    "Himmler",
+    "zigHael",
+    "NAZZI",
+    "JewsHunter",
+    "nigahunter",
+    "Niga",
+    "NigaBoi",
+    "Nig4",
+    "MEGANIGA",
+    "KneeGro",
+    "CzarnuchJebany",
+    "CHURKA",
+    "xoxol",
+    "pidor",
+    "PIDARAZ",
+    "vladpidr",
+    "cwel666",
+    "gigacwel",
+    "Mongoloid",
+    "TALIBAN",
+    "Et_Binladen",
+    "samrapist",
+    "RapeAddict",
+    "ASphaltMolester",
+    "1488",
+    "Sam1488",
+    "kkk1488",
+    "Sam14881488",
 ];
-/// 'ñigga', 'nіgga' (Cyrillic і), fullwidth, 'ΝΙGGΑ' (Greek Ν Ι Α), combining low lines, circled, 'fаg' (Cyrillic а)
+/// 'ñigga', 'nіgga' (Cyrillic і), fullwidth, 'ΝΙGGΑ' (Greek Ν Ι Α), combining low lines, circled, 'fаg' (Cyrillic а),
+/// 'Ηitler' (Greek Η), fullwidth, fullwidth digits
 pub(crate) const UNICODE: &[&str] = &[
     "\u{f1}igga",
     "n\u{456}gga",
@@ -63,6 +99,9 @@ pub(crate) const UNICODE: &[&str] = &[
     "n\u{332}i\u{332}g\u{332}g\u{332}a\u{332}",
     "\u{24d5}\u{24d0}\u{24d6}",
     "f\u{430}g",
+    "\u{397}itler",
+    "\u{ff28}\u{ff49}\u{ff54}\u{ff4c}\u{ff45}\u{ff52}",
+    "Lander\u{ff11}\u{ff14}\u{ff18}\u{ff18}",
 ];
 /// other words with those letters in them, the player names this server sees most (Turkish) among them; then a
 /// name and a number: a year, two digits, the digits the Online mode adds to a taken name (nfsu2-online `free_variant`)
@@ -120,6 +159,24 @@ pub(crate) const ALLOWED: &[&str] = &[
     "Strannik",
     "VanDyke",
     "Van Dyke",
+    // the live names with the new words' letters in them, other numbers with 88
+    "Spider",
+    "MR.SPIDER",
+    "Shinigami",
+    "Zuniga",
+    "Vlado",
+    "Ataliba_Neto",
+    "Grapes",
+    "Trapezio",
+    "Adolf",
+    "Nazim",
+    "Nazif",
+    "Nygaard",
+    "Mongol",
+    "Churkin",
+    "jacob88",
+    "Jane8848",
+    "Ahmet1448",
 ];
 
 // names.mjs: the lists' words, the ways round them, and not the other words
@@ -183,6 +240,9 @@ fn numbers_and_letters() {
     assert!(!blocked_name("Ni99A") && blocked_name("NI99A"));
     // one digit is always read as a letter, or for 2 as none: a split, the name's letters still read together
     assert!(blocked_name("f4g") && blocked_name("f2ag") && blocked_name("fa2g2") && !blocked_name("fa2g2x"));
+    // 1488 anywhere, in any run of digits, past the 255 letters too; not its digits apart
+    assert!(blocked_name("x1488x") && blocked_name("2281488") && blocked_name(&("x".repeat(300) + "1488")));
+    assert!(!blocked_name("14 88") && !blocked_name("1448") && !blocked_name("14_88"));
 }
 
 #[test]

@@ -64,6 +64,15 @@
  * drift camera.  A view 4 outside a drift event is the game's own trouble
  * too: free roam's setup puts it back to 3 (0x540599).
  *
+ * The music: a drift or drag event has none.  The music manager's tick
+ * (0x482180) plays the EA Trax songs in the world only when the race is no
+ * drift (0x401910) and no drag event (0x4018F0), and switches to its other
+ * player otherwise; the in-game mix (0x471970) turns the music's channel all
+ * the way down for both (its attenuation, [this +0x3C] and [0x7ED344], 0x7FFF).
+ * Both read the switch, so drift mode silenced the music, and the second X
+ * started a new song.  While the switch is ours neither sees it (drift_hook):
+ * free roam's song plays on.
+ *
  * Only in free roam itself: the world, free roam's race (kind 0, its one
  * racer, racing: 6 is paused), no career race, not Online or LAN.  A menu,
  * the map, a message or a race card over the HUD switches the handling off
@@ -84,6 +93,7 @@
  *   drift_pend   its points so far (the page counts them up, as the drift event's HUD does) */
 #include "cpu.h"
 #include "kbd.h"
+#include "widescreen.h"           /* HOOK_SITE */
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
@@ -313,6 +323,19 @@ void drift_frame(CPU *c){
         if (!D.cam) camera_on(c);
     } else if (D.cam && (!D.want || !world)) camera_off(c, rd32(G_FLOW) == 6u && hud_on_top());
     publish();
+}
+
+/* The music's two tests of the switch, while it is ours: no drift event (free roam's songs, at their volume). */
+int drift_hook(CPU *c, uint32_t ip){
+    switch (ip){
+    case HOOK_SITE(0x00482279):                  /* the music manager: test al, al (0x401910, a drift event?) */
+        if (D.on && !MR8(G_DRIFTRACE)) c->eax &= ~0xffu;
+        return 1;
+    case HOOK_SITE(0x00471b95):                  /* the in-game mix: test eax, eax (eax = [0x890104]) */
+        if (D.on && !MR8(G_DRIFTRACE)) c->eax = 0;
+        return 1;
+    }
+    return 0;
 }
 
 /* The drift event's leaderboard while the switch is ours (free roam's AI cars are no racers): skipped. */

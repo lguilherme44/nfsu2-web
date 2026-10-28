@@ -185,12 +185,14 @@ static void t_roundtrip(void){
     memset(&m, 0, sizeof m); m.h.type = RC_MSG_LOBBY; m.h.sender = 7;
     { rc_lobby *l = &m.u.lobby;
       l->op = RC_LOBBY_ADVERT; l->arg = 0; l->state = RC_LS_STARTING; l->max = 6; l->to = 0xCAFEF00Du; l->lobby = 0x1234ABCDu;
-      l->race = 0x9E3779B9u; l->x = -1234; l->y = 4321; l->t_ms = 5000; l->n = 3; l->ids[0] = 7; l->ids[1] = 0x51; l->ids[2] = 0x52;
+      l->race = 0x9E3779B9u; l->x = -1234; l->y = 4321; l->t_ms = 5000; l->n = 3; l->away_s = 17; l->ids[0] = 7; l->ids[1] = 0x51; l->ids[2] = 0x52;
       int n = rc_encode(&m, b, sizeof b);
       const rc_lobby *e = &d.u.lobby;
       CHECK(n == RC_HDR + 24 + 12 + RC_CRC && rc_decode(b, n, &d) == RC_OK && e->op == RC_LOBBY_ADVERT && e->state == RC_LS_STARTING &&
             e->max == 6 && e->to == 0xCAFEF00Du && e->lobby == 0x1234ABCDu && e->race == 0x9E3779B9u && e->x == -1234 && e->y == 4321 &&
-            e->t_ms == 5000 && e->n == 3 && e->ids[0] == 7 && e->ids[2] == 0x52, "LOBBY round trip (%d bytes)", n);
+            e->t_ms == 5000 && e->n == 3 && e->away_s == 17 && e->ids[0] == 7 && e->ids[2] == 0x52, "LOBBY round trip (%d bytes)", n);
+      /* the away byte where the reserved one was (after n): what older games and the hub skip */
+      CHECK(b[RC_HDR + 22] == 3 && b[RC_HDR + 23] == 17, "LOBBY away byte after n");
       /* op 0, op past the last, reason past the last, state past the last, max 1, max 7, max 2 (< 3 players),
          lobby 0, race 0, the second player the same as the first, the third player 0 */
       static const struct { int at; uint8_t v; int zero3; } bad[] = { { RC_HDR, 0, 0 }, { RC_HDR, RC_LOBBY__N, 0 }, { RC_HDR + 1, RC_LL__N, 0 },

@@ -83,6 +83,8 @@ enum {
     IEV_QUIT = 10,        /* the player asked to quit: WM_CLOSE */
     IEV_TEXT = 11,        /* chars typed with no key (a phone's keyboard): WM_CHAR each, 0x08 deletes, 0x0D accepts */
     IEV_LOG = 12,         /* Download log: how long ago the last frame was, a stall report if long (watchdog.c) */
+    IEV_SMS = 13,         /* a = a text message of ours for the game's phone (sms.c) */
+    IEV_PHOTO = 14,       /* photo mode (photo.c): dik = what (PH_*), a, b its values */
 };
 enum {                    /* event flags */
     IKF_REPEAT = 1,       /* autorepeat */

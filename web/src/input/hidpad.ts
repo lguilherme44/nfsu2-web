@@ -13,7 +13,9 @@
 // the D-pad a hat switch.  The game's pad is positional (runtime/dinput_pad.c names its buttons so): A is the bottom
 // face button.  Most 8BitDo pads are labelled as Nintendo's (A right, B at the bottom, X at the top) and are the
 // Nintendo family to the game; the Ultimate line and a few others are labelled as Xbox's (XBOX_FACE).  In X-input and
-// Switch mode they are an Xbox 360 and a Switch Pro controller to the browsers, which map those.
+// Switch mode they are an Xbox 360 and a Switch Pro controller to the browsers, which map those.  Chrome on Android
+// puts them in the standard mapping's places itself without calling that standard (gamepad.ts androidLayout): not
+// read here.
 //
 // The axes are placed as each browser places a HID device's (wheel.ts Placement).  By usage (Chrome on Windows and
 // macOS, Firefox on Windows): the right stick on 2 and 5, the hat switch on 9, and Chrome's analog triggers in the

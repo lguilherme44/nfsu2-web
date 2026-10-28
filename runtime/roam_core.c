@@ -381,7 +381,7 @@ int rc_encode(const rc_msg *m, uint8_t *out, int cap){
         rc_put8(&w, l->op); rc_put8(&w, l->arg); rc_put8(&w, l->state); rc_put8(&w, l->max);
         rc_put32(&w, l->to); rc_put32(&w, l->lobby); rc_put32(&w, l->race);
         rc_put16(&w, (uint16_t)l->x); rc_put16(&w, (uint16_t)l->y); rc_put16(&w, l->t_ms); rc_put8(&w, l->n);
-        rc_put8(&w, 0);                                                   /* reserved */
+        rc_put8(&w, l->away_s);                                           /* (reserved before it: 0) */
         for (int i = 0; i < l->n; i++) rc_put32(&w, l->ids[i]);
         break; }
     case RC_MSG_LOBBIES:
@@ -520,7 +520,7 @@ int rc_decode(const uint8_t *buf, int len, rc_msg *m){
         l->op = (uint8_t)rc_get8(&r); l->arg = (uint8_t)rc_get8(&r); l->state = (uint8_t)rc_get8(&r); l->max = (uint8_t)rc_get8(&r);
         l->to = rc_get32(&r); l->lobby = rc_get32(&r); l->race = rc_get32(&r);
         l->x = (int16_t)rc_get16(&r); l->y = (int16_t)rc_get16(&r); l->t_ms = (uint16_t)rc_get16(&r); l->n = (uint8_t)rc_get8(&r);
-        (void)rc_get8(&r);
+        l->away_s = (uint8_t)rc_get8(&r);
         if (r.err) return RC_E_SHORT;
         if (l->n > RC_LOBBY_MAX) return RC_E_FIELD;
         for (int i = 0; i < l->n; i++) l->ids[i] = rc_get32(&r);

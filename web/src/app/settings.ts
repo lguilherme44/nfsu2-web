@@ -16,13 +16,15 @@
 // This module is pure (no DOM, no OPFS) so it can be checked under node.
 import { blockedName } from './names.mjs';
 import { crewsOk, rgbsOk } from './crews';
+import { groupsOk, phrasesOk } from './phrases';
 import { fill, LANGUAGES, N, type Vars } from './i18n';
 export { LANGUAGES };
 
 /** bundle.m's K_* kinds, and the browser's own crews (a list of names: crews.ts).  ic: K_IC, "value ; comment" (the
  *  free-roam keys).  room: K_ROOM, text that does not read as a slur (names.mjs, as a player's name). */
 export type Kind = 'raw' | 'bool' | 'boolInv' | 'enum' | 'num' | 'id' | 'token' | 'int' | 'name' | 'peers'
-  | 'path' | 'text' | 'room' | 'wxh' | 'fixes' | 'ifname' | 'ipv4' | 'mac' | 'host' | 'parts' | 'dump' | 'crews' | 'rgbs';
+  | 'path' | 'text' | 'room' | 'wxh' | 'fixes' | 'ifname' | 'ipv4' | 'mac' | 'host' | 'parts' | 'dump' | 'crews' | 'rgbs'
+  | 'phrases' | 'sayGroups';
 
 export interface KeyDef {
   key: string;
@@ -119,6 +121,9 @@ export const KEYS: readonly KeyDef[] = [
   // quick chat's fixed phrases (web/src/app/quickchat.ts, runtime/roam_game.c say_*): the page has the picker, so not in
   // bundle.m's table
   { key: 'quick_chat', env: 'NFSU2_ROAM_SAY', kind: 'bool', ic: true, scope: 'web' },
+  // and the player's sixteen of them, in four groups with their names (phrases.ts; only the page reads them)
+  { key: 'quick_chat_phrases', env: 'NFSU2_ROAM_SAY_PHRASES', kind: 'phrases', ic: true, scope: 'web' },
+  { key: 'quick_chat_groups', env: 'NFSU2_ROAM_SAY_GROUPS', kind: 'sayGroups', ic: true, scope: 'web' },
   { key: 'roam_rate', env: 'NFSU2_ROAM_RATE', kind: 'int', vals: '10..30', ic: true, scope: 'web' },
   { key: 'roam_delay', env: 'NFSU2_ROAM_DELAY', kind: 'int', vals: '0..1000', ic: true, scope: 'web' },
   { key: 'roam_extrap', env: 'NFSU2_ROAM_EXTRAP', kind: 'int', vals: '0..1000', ic: true, scope: 'web' },
@@ -194,10 +199,10 @@ export const TEMPLATE = `# NFSU2 settings, read at every launch.
 
 # The game's language: english, french, german, italian, spanish, dutch,
 # swedish, danish, korean, chinese, japanese, russian, thai, portuguese
-# (Brazil's) or polish.  French, German, Italian, Spanish, Japanese and
-# Russian come with their dubbed voices and movies where the server has the
-# language packs; Russian, Portuguese and Polish take their text from them
-# too.  [NFSU2_LANGUAGE]
+# (Brazil's), polish or turkish.  French, German, Italian, Spanish, Japanese
+# and Russian come with their dubbed voices and movies where the server has
+# the language packs; Russian, Portuguese, Polish and Turkish take their text
+# from them too.  [NFSU2_LANGUAGE]
 #language = english
 
 # The movies' subtitles: the PSA, the tutorials and the story, in every
@@ -234,7 +239,9 @@ export const TEMPLATE = `# NFSU2 settings, read at every launch.
 #quit_grace = 10
 
 # Seed registry.txt with the game's highest graphics settings on first launch
-# (native-resolution row).  off = let the game run its own first-run hardware
+# (native-resolution row; a phone's without car and road reflections, motion
+# blur, depth of field, overbright and bleach bypass, which the game's Options,
+# Display turn back on).  off = let the game run its own first-run hardware
 # check instead.  Delete registry.txt (a fresh backup without it) to start
 # over.  [NFSU2_SEED_REGISTRY]
 #seed_registry = on
@@ -300,9 +307,9 @@ export const TEMPLATE = `# NFSU2 settings, read at every launch.
 # work.  Cutscenes stay at 30 fps in every mode.  [NFSU2_FPS]
 #fps = auto
 # Fixes for subsystems that count frames: default (all above 60 fps, none
-# at 60, ticks,particles,rain at 30), all, none, or a list of
-# ticks,timer,particles,trail,audio,rtf,rain (a leading '-' removes one,
-# e.g. default,-audio).  [NFSU2_HFR_FIX]
+# at 60, ticks,particles,rain,spinners at 30), all, none, or a list of
+# ticks,timer,particles,trail,audio,rtf,rain,spinners (a leading '-' removes
+# one, e.g. default,-audio).  [NFSU2_HFR_FIX]
 #hfr_fixes = default
 # Length factor of the NOS / streak trail.  [NFSU2_NOS_TRAIL_LEN]
 #nos_trail_length = 1.0
@@ -324,8 +331,10 @@ export const TEMPLATE = `# NFSU2 settings, read at every launch.
 # hotplug = only while one is connected (DirectInput behaviour); off = no
 # controller.  The bindings are set in the game's Controls menu.  [NFSU2_PAD]
 #gamepad = on
-# Rumble on controllers that have it (Xbox, DualSense and others in Chrome):
-# crashes and hard landings, and the game's own force feedback.  [NFSU2_FF]
+# Rumble on controllers that have it (Xbox, DualSense and others in Chrome),
+# and with the touch controls the phone's vibration: crashes and hard
+# landings, the game's own force feedback and the tick of each button press.
+# [NFSU2_FF]
 #rumble = on
 # Stick dead zone (fraction of full travel, 0 to 0.9) and trigger dead zone.
 # [NFSU2_PAD_DEADZONE, NFSU2_PAD_TRIGGER_DEADZONE]
@@ -395,7 +404,8 @@ export const TEMPLATE = `# NFSU2 settings, read at every launch.
 #roam_discovery = on
 # Largest group: you and the players you exchange cars with at once (2 to
 # 33; the server picks the nearest), and other players' cars shown at once
-# (0 to 32, the nearest).  [NFSU2_ROAM_MAX_PLAYERS, NFSU2_ROAM_MAX_CARS]
+# (16, 20, 24, 28 or 32, the nearest; phones start at 16, tablets at 24).
+# [NFSU2_ROAM_MAX_PLAYERS, NFSU2_ROAM_MAX_CARS]
 #roam_max_players = 33
 #roam_max_cars = 32
 # on = the other players' cars are solid: drawn where they are now, and one
@@ -403,11 +413,17 @@ export const TEMPLATE = `# NFSU2 settings, read at every launch.
 # off = Ghost mode: you drive through them, and they through yours.
 # [NFSU2_ROAM_COLLIDE]
 #roam_collide = on
-# Quick chat: say one of sixteen set phrases to the players near you (1 to
-# 4, then 1 to 4; a controller's right stick twice; the chat button on a
-# touch screen), and see theirs over their cars.  off = neither, and the
+# Quick chat: say one of your sixteen set phrases to the players near you
+# (1 to 4, then 1 to 4; a controller's right stick twice; the chat button on
+# a touch screen), and see theirs over their cars.  off = neither, and the
 # others send you none.  [NFSU2_ROAM_SAY]
 #quick_chat = on
+# Your sixteen: the phrases' numbers (web/src/app/phrases.ts), four for each
+# of 1 to 4, and the four groups' names (hi, reply, thanks, nice, drive,
+# meet, race, react or help).  The start page's Your phrases picks them.
+# [NFSU2_ROAM_SAY_PHRASES, NFSU2_ROAM_SAY_GROUPS]
+#quick_chat_phrases = 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15
+#quick_chat_groups = hi,reply,drive,race
 # Snapshots per second (10 to 30), the delay ghost cars are shown with in
 # ms (0 to 1000) and the longest cars are extrapolated in ms (0 to 1000).
 # [NFSU2_ROAM_RATE, NFSU2_ROAM_DELAY, NFSU2_ROAM_EXTRAP]
@@ -503,7 +519,7 @@ function listOk(v: string, words: readonly string[], minus: boolean): boolean {
   const toks = v.split(/[, \t]+/).filter(Boolean);
   return toks.length > 0 && toks.every(t => words.includes(lower(minus && t[0] === '-' ? t.slice(1) : t)));
 }
-const FIX_WORDS = ['default', 'all', 'none', 'ticks', 'timer', 'particles', 'trail', 'audio', 'rtf', 'rain'];
+const FIX_WORDS = ['default', 'all', 'none', 'ticks', 'timer', 'particles', 'trail', 'audio', 'rtf', 'rain', 'spinners'];
 const PART_WORDS = ['all', 'world', 'signs', 'cars', 'garage', 'sky', 'effects', 'frontend', 'hud', 'other'];
 /** sscanf %u: strtoull's value (saturated), stored into a 32-bit unsigned */
 const scanU32 = (d: string) => { let x = BigInt(d); const max = (1n << 64n) - 1n; if (x > max) x = max; return Number(x & 0xFFFFFFFFn); };
@@ -533,6 +549,8 @@ function valueOk(kind: Kind, v: string): boolean {
     case 'dump': return truthy(v) || falsy(v) || printableOk(v, 1023);
     case 'crews': return printableOk(v, 1023) && crewsOk(v);
     case 'rgbs': return rgbsOk(v);
+    case 'phrases': return phrasesOk(v);
+    case 'sayGroups': return groupsOk(v);
     default: return true;
   }
 }
@@ -541,7 +559,7 @@ const KIND_TEXT: Partial<Record<Kind, string>> = {
   path: N('a folder (printable, under 1024 bytes)'),
   text: N('text of 1 to 63 bytes without control characters'),
   wxh: N('<width>x<height> (320 to 16384 each)'),
-  fixes: N('default, all, none or a list of ticks, timer, particles, trail, audio, rtf, rain (-name removes one)'),
+  fixes: N('default, all, none or a list of ticks, timer, particles, trail, audio, rtf, rain, spinners (-name removes one)'),
   ifname: N('a network interface name (letters and digits, e.g. en0)'),
   ipv4: N('an IPv4 address a.b.c.d'),
   mac: N('xx:xx:xx:xx:xx:xx (hex, not all zero)'),
@@ -550,6 +568,8 @@ const KIND_TEXT: Partial<Record<Kind, string>> = {
   dump: N('on, off or a folder'),
   crews: N('a list of crew names (at most 24 characters each, separated by commas)'),
   rgbs: N('a list of up to 4 colours of 6 hex digits (rrggbb), separated by commas'),
+  phrases: N('16 quick chat phrase numbers, separated by commas'),
+  sayGroups: N('4 of hi, reply, thanks, nice, drive, meet, race, react, help, separated by commas'),
 };
 
 /** strtod() consuming the whole string (decimal, exponent, hex, inf/nan, leading blanks as C does).

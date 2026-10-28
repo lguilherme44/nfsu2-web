@@ -130,7 +130,7 @@
             <div class="touch-only"><dt><kbd>☰</kbd></dt><dd data-i18n>Menu: full screen, controls, log, quit</dd></div>
             <div><dt data-i18n-html><kbd>Home</kbd> or both sticks pressed in</dt><dd data-i18n>The menu, on a controller</dd></div>
             <div class="key-only"><dt><kbd>F8</kbd></dt><dd data-i18n>Frame-rate counter</dd></div>
-            <div class="key-only"><dt><kbd>F12</kbd></dt><dd data-i18n>Screenshot, shown in Saves</dd></div>
+            <div class="key-only"><dt><kbd>F12</kbd></dt><dd data-i18n>Photo mode while you drive, F12 again for the photo (shown in Saves)</dd></div>
             <div class="key-only"><dt data-i18n-html>Hold <kbd>Esc</kbd></dt><dd data-i18n>Leave full screen</dd></div>
           </dl>
         </div>
@@ -155,7 +155,7 @@
       <h3 data-i18n>Credits</h3>
       <div class="prose">
         <p data-i18n-html>The source code is on <a href="https://github.com/th0mk/nfsu2-web" target="_blank" rel="noopener noreferrer">GitHub</a>. This port is based on <a href="https://github.com/TalhaMudo/NFSU2Recomp" target="_blank" rel="noopener noreferrer">NFSU2Recomp</a> by Talha Müderrisoğlu, the original x86 → C static recompiler for NFSU2, which in turn follows the method of <a href="https://github.com/N64Recomp/N64Recomp" target="_blank" rel="noopener noreferrer">N64: Recompiled</a> and <a href="https://github.com/hedge-dev/XenonRecomp" target="_blank" rel="noopener noreferrer">XenonRecomp</a>.</p>
-        <p data-i18n-html>The language packs are built from KyoriAsh's <a href="https://nfsmods.xyz/mod/5749" target="_blank" rel="noopener noreferrer">Multi 13 languages mod</a> (with Lee-Ryo's Thai support), from TraduMix's and MixMods' Brazilian Portuguese translation (Fyro, Beater, Kerlyston F.; Junior_Djjr, SideWinder, Elyzandro), from PLProjekt's Polish translation (Daniel Graszka, MaDeR, Marcin Piech, Nati, Mateusz Wilkowski, alter) and from VileStuff's <a href="https://nfsmods.xyz/mod/5286" target="_blank" rel="noopener noreferrer">English Subtitles Fixed</a>. The texture pack is built from LunicAura106's <a href="https://nfsmods.xyz/mod/4319" target="_blank" rel="noopener noreferrer">Upscaled HUD</a>.</p>
+        <p data-i18n-html>The language packs are built from KyoriAsh's <a href="https://nfsmods.xyz/mod/5749" target="_blank" rel="noopener noreferrer">Multi 13 languages mod</a> (with Lee-Ryo's Thai support), from TraduMix's and MixMods' Brazilian Portuguese translation (Fyro, Beater, Kerlyston F.; Junior_Djjr, SideWinder, Elyzandro), from PLProjekt's Polish translation (Daniel Graszka, MaDeR, Marcin Piech, Nati, Mateusz Wilkowski, alter), from VileStuff's <a href="https://nfsmods.xyz/mod/5286" target="_blank" rel="noopener noreferrer">English Subtitles Fixed</a> and from muntazam's <a href="https://www.moddb.com/mods/need-for-speed-underground-2-turkish-translation-patch" target="_blank" rel="noopener noreferrer">Turkish translation</a>. The texture pack is built from LunicAura106's <a href="https://nfsmods.xyz/mod/4319" target="_blank" rel="noopener noreferrer">Upscaled HUD</a>.</p>
       </div>
     </section>
   </div>
@@ -197,6 +197,7 @@
         </form>
         <p class="hint" id="vault-about" data-i18n>Make a keyphrase, or enter yours to load your saves.</p>
         <p class="hint warn" id="vault-status" role="status"></p>
+        <div id="vault-sides"></div>
         <div class="row" id="vault-conflict" hidden>
           <button type="button" class="btn" id="vault-mine" data-i18n>Keep this browser's</button>
           <button type="button" class="btn" id="vault-theirs" data-i18n>Use the cloud's</button>
@@ -207,6 +208,7 @@
           <button type="button" class="text-btn" id="vault-stop" data-i18n>Stop syncing</button>
           <button type="button" class="text-btn" id="vault-delete" data-i18n>Delete from cloud</button>
         </div>
+        <p class="hint" id="vault-replaced" hidden><span id="vault-replaced-text"></span> <button type="button" class="text-btn" id="vault-putback" data-i18n>Put back</button></p>
         <p class="msg" id="vault-msg" role="status"></p>
       </div>
       <p class="msg warn" id="storage-note" hidden></p>
@@ -284,6 +286,11 @@
     <button type="button" class="btn" data-act="fps">Frame-rate counter: off</button>
     <button type="button" class="btn" data-act="solid" data-i18n-attr="title" title="On: you drive through the other players' cars, and they through yours. Off: you collide with them." hidden>Ghost mode: off</button>
     <button type="button" class="btn" data-act="crews" aria-haspopup="dialog" hidden>Crews: none</button>
+    <div class="menu-radio">
+      <button type="button" class="btn" data-act="radio" aria-pressed="false"><span id="radio-label">Radio: off</span></button>
+      <button type="button" class="icon" data-act="radio-folder" data-i18n-attr="aria-label title" aria-label="Music folder" title="Music folder"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h6l2 2h10v11H3z"/></svg></button>
+      <button type="button" class="icon" data-act="playlist" data-i18n-attr="aria-label title" aria-label="Playlist" title="Playlist"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h12M9 12h12M9 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg></button>
+    </div>
     <button type="button" class="btn" data-act="help" data-i18n>Controls</button>
     <button type="button" class="btn" data-act="offline" hidden data-i18n>Stop waiting: play offline</button>
     <button type="button" class="btn" data-act="log" data-i18n>Download log</button>
@@ -299,6 +306,14 @@
   <div class="row end">
     <button type="button" class="btn selected" data-act="crews-done" data-i18n>Done</button>
   </div>
+</dialog>
+<dialog class="dlg playlist" id="playlist" aria-labelledby="playlist-title">
+  <form method="dialog" class="dlg-head">
+    <h2 id="playlist-title" data-i18n>Playlist</h2>
+    <button class="btn" value="close" data-i18n>Back</button>
+  </form>
+  <label class="track" id="playlist-shuffle"><span data-i18n>Shuffle</span><input type="checkbox" class="switch" role="switch"></label>
+  <div id="playlist-body"></div>
 </dialog>
 
 <dialog class="dlg shot-view" id="shot-view" aria-labelledby="shot-title">

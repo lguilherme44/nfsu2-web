@@ -112,3 +112,62 @@ test('an 8BitDo pad through the poller: its own layout, the Nintendo family, and
     Object.assign(globalThis, ev);
   }
 });
+
+/** fn(pads) with navigator.getGamepads() giving pads, the browser's user agent and touch points, and the window's
+ *  events on a target of its own */
+async function onBrowser(userAgent, maxTouchPoints, fn) {
+  const nav = Object.getOwnPropertyDescriptor(globalThis, 'navigator'), et = new EventTarget(), pads = [];
+  Object.defineProperty(globalThis, 'navigator', { value: { getGamepads: () => pads, userAgent, maxTouchPoints }, configurable: true });
+  const ev = { addEventListener: globalThis.addEventListener, removeEventListener: globalThis.removeEventListener, dispatchEvent: globalThis.dispatchEvent };
+  Object.assign(globalThis, { addEventListener: et.addEventListener.bind(et), removeEventListener: et.removeEventListener.bind(et),
+    dispatchEvent: et.dispatchEvent.bind(et) });
+  try { await fn(pads); } finally {
+    if (nav) Object.defineProperty(globalThis, 'navigator', nav); else delete globalThis.navigator;
+    Object.assign(globalThis, ev);
+  }
+}
+const ANDROID_UA = 'Mozilla/5.0 (Linux; Android 14; SM-X826B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
+const DESKTOP_SITE_UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
+// an Ultimate 2 under Chrome on Android: Android's key codes put it in the standard mapping's places (sticks on 0-3,
+// the triggers buttons 6 and 7, the D-pad 12-15, Home 16), but Chrome knows no mapping of its own for it
+const ULTIMATE2_ANDROID = '8BitDo Ultimate 2 Wireless (Vendor: 2dc8 Product: 6012)';
+
+/** an Ultimate 2 on a browser through the poller: what the pad gets for its buttons and the log */
+async function ultimate2On(ua, touch) {
+  const G2 = await load('web/src/input/gamepad.ts');
+  const out = { logs: [] };
+  await onBrowser(ua, touch, async (pads) => {
+    const buf = new SharedArrayBuffer(4096), h = new Int32Array(buf), f = new Float32Array(buf);
+    const g = { id: ULTIMATE2_ANDROID, index: 0, mapping: '', connected: true, axes: [0, 0, 0, 0],
+      buttons: Array.from({ length: 17 }, () => ({ pressed: false, value: 0 })) };
+    pads.push(g);
+    const p = new G2.PadPoller(h, new Uint8Array(buf), 0, () => {}, s => out.logs.push(s));
+    const on = (...b) => { g.buttons.forEach((_, i) => { g.buttons[i] = { pressed: b.includes(i), value: b.includes(i) ? 1 : 0 }; }); p.poll(); return h[P.IM_PAD_BUTTONS]; };
+    out.mayDrive = G2.mayDrive(g);
+    out.face = [on(0), on(1), on(2), on(3)];
+    out.shoulders = on(4, 5);
+    out.dpad = [on(12), on(13), on(14), on(15)];
+    out.rest = on(8, 9, 10, 11);
+    on(); g.buttons[7] = { pressed: true, value: 0.75 }; g.axes[0] = -0.5; p.poll();
+    out.gas = +f[P.IM_PAD_AXIS + P.PAD_AXIS_RT].toFixed(2); out.lx = f[P.IM_PAD_AXIS + P.PAD_AXIS_LX];
+    p.dispose();
+  });
+  return out;
+}
+
+test('an 8BitDo pad under Chrome on Android: Android\'s places as they come, not its HID report\'s (a report: nothing worked)', async () => {
+  const want = { face: [bit(P.PAD_A), bit(P.PAD_B), bit(P.PAD_X), bit(P.PAD_Y)], shoulders: bit(P.PAD_LB, P.PAD_RB),
+    dpad: [bit(P.PAD_DUP), bit(P.PAD_DDOWN), bit(P.PAD_DLEFT), bit(P.PAD_DRIGHT)],
+    rest: bit(P.PAD_BACK, P.PAD_START, P.PAD_LS, P.PAD_RS), gas: 0.75, lx: -0.5 };
+  for (const [ua, touch] of [[ANDROID_UA, 5], [DESKTOP_SITE_UA, 5]]) {   // a phone, and a big tablet asking for desktop sites
+    const r = await ultimate2On(ua, touch);
+    assert.ok(r.mayDrive);
+    assert.deepEqual({ face: r.face, shoulders: r.shoulders, dpad: r.dpad, rest: r.rest, gas: r.gas, lx: r.lx }, want, ua);
+    assert.ok(r.logs.some(s => /read as it is: Android put it in the standard mapping's places/.test(s)));
+    assert.ok(!r.logs.some(s => /8BitDo controller/.test(s)));
+  }
+  // Chrome on a Linux desktop (no touch screen): the report's order, through the 8BitDo layout as before
+  const linux = await ultimate2On(DESKTOP_SITE_UA, 0);
+  assert.ok(linux.logs.some(s => /read as an 8BitDo controller \(xbox buttons\)/.test(s)));
+  assert.equal(linux.face[2], 0);                                  // its index 2 is a gap there
+});

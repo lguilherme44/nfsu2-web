@@ -62,6 +62,10 @@ const TABLE = [
   ['powerunits', 'options_units.txt', '[units] power in bhp', '', 400],
   // the European game's Corsa and 106 (runtime/regional.c): Quick Race in the Corsa
   ['eucars', 'qr_eucars.txt', '[expect] PASS', '', 400],
+  // photo mode (runtime/photo.c): on, its camera, off, and the pause menu's Photo Mode, as the page drives them
+  ['photo', 'photo_mode.txt', "the pause menu's Photo Mode", '', 400],
+  // the pause menu's Replay (runtime/photo.c leaves it to the game): after some driving it plays the race back
+  ['replay', 'replay_pause.txt', 'LOG back_to_pause', '', 400],
   // ns* commands: without a page input layer, runtime/web/input_web.c translates them into the event ring
   ['keyboard', 'kb_rebind_save.txt', 'waitmem [0x008654a4]==6 satisfied', '', 400],
   ['careerbot', 'career_bot.txt', 'segment done', 'NFSU2_CAREER_BOT_RACES=2', 600],

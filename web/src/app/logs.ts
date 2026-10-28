@@ -34,10 +34,13 @@ export class LogRing {
   dropped = 0;
   /** lines given to add() and keep() so far (a fold's repeats too): changes whenever the log does */
   added = 0;
+  /** sees every line as it comes, a fold's repeats too (privacy.ts learns the names in them) */
+  onLine?: (s: string) => void;
   constructor(private budget = 8 << 20, private echo = true, private headLines = 300, private keepBudget = 256 << 10) {}
 
   add(s: string) {
     this.added++;
+    this.onLine?.(s);
     if (this.echo) console.log(s);
     if (this.waits.length) this.saw(s);
     if (this.group) {
@@ -53,6 +56,7 @@ export class LogRing {
   /** a line that stays when the log is trimmed (a game's session lines) */
   keep(s: string) {
     this.added++;
+    this.onLine?.(s);
     if (this.echo) console.log(s);
     if (this.waits.length) this.saw(s);
     if (this.group) this.endFold();

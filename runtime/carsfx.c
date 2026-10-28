@@ -58,6 +58,14 @@
  * fade), from the side the car is on, duller the farther it is, its pitch
  * shifted by how fast it and the player come or go (Doppler).
  *
+ * The player's own volumes: the game's Options > Audio sliders (G_VOLUMES,
+ * floats 0 .. 1; a new profile has 1 for all of these) scale its own sounds
+ * in its mix, each by its slider times Master (0x45C210, 0x471970: linear,
+ * of 0x7FFF).  The levels above are the game's at those defaults, so a
+ * friend's engine follows Engine Volume times Master and its nitrous and
+ * hydraulics Sound Effects Volume times Master, read every frame: lowered,
+ * they were as loud as ever over the game's own sound.
+ *
  * Threads: the game thread decides (carsfx_begin, carsfx_car, carsfx_end)
  * and writes each voice's words under a sequence count; the mixer takes a
  * voice's words only when the count is even and the same before and after,
@@ -68,6 +76,7 @@
  * car has that engine (kept for the session: the game has 43 engine sounds,
  * about half a megabyte each decoded). */
 #include "carsfx.h"
+#include "cpu.h"
 #include <math.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -91,6 +100,7 @@ int fileio_resolve_game(const char *win, char *out, size_t outsz);     /* fileio
 #define XFADE     96                 /* output samples: a grain that does not follow the last one fades in */
 #define ENG_ATT   0.06f              /* s: an engine fades in, */
 #define ENG_REL   0.15f              /* ...and out */
+#define G_VOLUMES 0x0083aa28u        /* the game's volumes (floats): +0 Master, +0x10 Sound Effects, +0x14 Engine */
 
 enum { S_ENGAGE, S_RELEASE, S_PURGE, S_PURGE_START, S_PUMP, S_CLUNK, S_CLICK, S_VALVE, S_THUMP, S_N };
 static const char *const k_bank[2] = { "SOUND\\NOS\\Nitrous_01_MB.abk", "SOUND\\NOS\\Hydraulics_00_MB.abk" };
@@ -383,13 +393,21 @@ static struct {
 } g_car[CARS];
 static struct { int ok; float p[3], l[2], v[3]; } g_lis;
 static uint32_t g_gen, g_rnd = 0x9e3779b9u, g_now;
+static float g_vol_eng = 1.f, g_vol_sfx = 1.f;      /* the player's Engine and Sound Effects volumes, times Master */
+/* one of the game's volumes (G_VOLUMES + off), 1 while it is not there or not one */
+static float game_volume(uint32_t off){
+    uint32_t a = G_VOLUMES + off;
+    if (!mem_is_committed(a) || !mem_is_committed(a + 3u)) return 1.f;
+    float v = MRF32(a);
+    return v >= 0.f && v <= 1.f ? v : 1.f;
+}
 static float rnd_pitch(void){ g_rnd = g_rnd * 1664525u + 1013904223u; return 0.96f + 0.06f * (float)(g_rnd >> 8) / 16777216.f; }
 
 static void voice_write(int k){
     const int c = g_vo[k].car;
     float pan = g_car[c].pan + g_vo[k].pan;
     VWords w = { g_vo[k].gen, g_vo[k].snd, g_vo[k].flags, g_vo[k].fade_ms, g_vo[k].delay,
-                 fbits(g_vo[k].gain * g_car[c].gain), fbits(pan < -1.f ? -1.f : pan > 1.f ? 1.f : pan), fbits(g_vo[k].pitch * g_car[c].doppler),
+                 fbits(g_vo[k].gain * g_car[c].gain * g_vol_sfx), fbits(pan < -1.f ? -1.f : pan > 1.f ? 1.f : pan), fbits(g_vo[k].pitch * g_car[c].doppler),
                  fbits(g_car[c].gain), g_now };
     words_put(k, &w);
 }
@@ -431,6 +449,11 @@ static void voice_stop(uint32_t *gen, uint32_t fade_ms){
 
 void carsfx_begin(const float *pos, const float *fwd, const float *vel){
     g_now = now_ms();
+    float master = game_volume(0), ve = master * game_volume(0x14u), vs = master * game_volume(0x10u);
+    if (ve != g_vol_eng || vs != g_vol_sfx)
+        fprintf(stderr, "[carsfx] friends' engines at %.0f %%, their nitrous and hydraulics at %.0f %% (the game's volumes)\n",
+                100.0 * ve, 100.0 * vs);
+    g_vol_eng = ve; g_vol_sfx = vs;
     if (!g_load_started){
         g_load_started = 1;
         pthread_t t; pthread_attr_t a; pthread_attr_init(&a); pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);
@@ -482,7 +505,8 @@ void carsfx_car(uint32_t who, const char *name, const float *p, const float *v, 
 
     /* its engine: the mixer plays it while it is given (and its GIN files are in) */
     uint32_t e = g > 0.f && st->gin[0] && st->gin[1] && st->eng > 0.f ? engine_of(st->gin[0], st->gin[1]) : 0;
-    EWords ew = { g_car[c].egen, e, fbits(st->eng), fbits(K_ENG * OTHER * st->eng_gain[0]), fbits(K_ENG * OTHER * st->eng_gain[1]),
+    EWords ew = { g_car[c].egen, e, fbits(st->eng), fbits(K_ENG * OTHER * g_vol_eng * st->eng_gain[0]),
+                  fbits(K_ENG * OTHER * g_vol_eng * st->eng_gain[1]),
                   fbits(g), fbits(pan), fbits(dop), g_now };
     ewords_put(c, &ew);
     if (__atomic_load_n(&g_ready, __ATOMIC_ACQUIRE) != 1) return;

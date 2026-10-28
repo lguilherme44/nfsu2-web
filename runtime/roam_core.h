@@ -262,6 +262,8 @@ typedef struct {
     int16_t  x, y;                 /* where the race starts (m) */
     uint16_t t_ms;                 /* START: in this many ms */
     uint8_t  n;                    /* players in it */
+    uint8_t  away_s;               /* ADVERT: its host seems away, the lobby closes in this many s (0: not); the byte
+                                    * after n, reserved before it: older games send 0 and skip it, as the hub does */
     uint32_t ids[RC_LOBBY_MAX];    /* the host first */
 } rc_lobby;
 

@@ -288,6 +288,20 @@ kbd .glyph { display: inline-block; width: 14px; height: 14px; vertical-align: -
 .set-list { grid-template-columns: minmax(0, 1fr); grid-template-areas: "label" "help" "ctl"; }
 /* one line (not the phone's wrap): a wrapping column stretches to its widest item, and a long name would widen the page */
 .set-list .set-control { flex-direction: column; flex-wrap: nowrap; align-items: stretch; justify-content: flex-start; margin-top: 8px; }
+/* Your phrases (settings-ui.ts phraseControl): under Choose phrases, a column for each of 1 to 4 (two on a phone): the
+ * key, the group's name, its four phrases, each a value box as narrow as the column; Reset under them */
+.phrases > summary { min-height: 40px; }
+.phrase-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px 12px; margin: 4px 0 8px; }
+@media (max-width: 720px) { .phrase-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.phrase-col { display: grid; gap: 8px; align-content: start; min-width: 0; }
+.phrase-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.phrase-head kbd {
+  flex: none; min-width: 24px; padding: 0 6px; text-align: center; border: 1px solid var(--edge); border-radius: 4px;
+  background: var(--field); font: 700 13px/22px var(--font); color: var(--text);
+}
+.set .phrase-col select { width: 100%; min-width: 0; height: 36px; font-size: 14px; line-height: 20px; text-overflow: ellipsis; }
+.set .phrase-head select { color: var(--text); font-style: normal; text-transform: uppercase; letter-spacing: 0.02em; }
+.phrases > .text-btn { padding: 0; }
 .crew-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 /* (its chips are pills of the line, the box after the last of them) */
 .crews { display: contents; list-style: none; }
@@ -402,6 +416,28 @@ summary:hover { color: var(--text); }
 #vault-conflict { margin-top: 12px; }
 #vault-on { margin-top: 4px; gap: 4px 16px; }
 #vault-on .text-btn { padding: 0; height: 24px; }
+/* a conflict's two sides (vault-ui.ts sidesOf), in the section and in its questions: two cards side by side, where on
+ * top (the newer one marked beside it and framed), its profiles, banks and when under it; the saves a cloud version
+ * replaced, with Put back */
+.vault-sides { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin: 8px 0 0; padding: 0; list-style: none; font-size: 14px; line-height: 20px; }
+.vault-sides li { display: grid; grid-template-columns: 1fr auto; align-content: start; gap: 2px 8px; padding: 10px 12px; border: 2px solid var(--line); border-radius: 8px; }
+.vault-sides li.newer { border-color: var(--lime); }
+.vault-sides b { grid-row: 1; min-width: 0; color: var(--muted); font-weight: 400; }
+.vault-sides span { grid-row: 2; grid-column: 1 / -1; min-width: 0; }
+.vault-sides em { grid-row: 1; grid-column: 2; color: var(--lime); font-style: normal; font-weight: 700; }
+.dlg ul.vault-sides { margin: 0 0 16px; padding: 0; color: inherit; }
+.dlg p.warn { color: var(--warn); }
+#vault-replaced { margin-top: 8px; }
+#vault-replaced .text-btn { padding: 0; height: 24px; }
+/* the keyphrase just made at Play (shell.ts askCloud): shown whole, in a value box like the section's, wrapped at its
+ * dashes; Copy and Download keyphrase as text under it */
+.keyphrase {
+  padding: 6px 10px; border: 2px solid var(--edge); border-radius: 8px; background: var(--field);
+  color: var(--lime); font: 14px/24px var(--mono); user-select: all;
+}
+.dlg p.keyphrase { margin-bottom: 4px; }
+.keyphrase-do { gap: 4px 16px; margin-bottom: 12px; }
+.keyphrase-do .text-btn { padding: 0; height: 24px; }
 #cache-info { font-variant-numeric: tabular-nums; }
 #data-bar { margin: 0 0 16px; }
 .msg { font-size: 14px; line-height: 20px; margin-top: 12px; }
@@ -681,6 +717,49 @@ html:has(> body > .stage:not([hidden])) { overflow: hidden; }
  * game draws, sized with the HUD (--u, 16 units at the nearest) and scaled with the name by the line's transform
  * (quickchat.ts LINE_MIN: never below 70 %), which follows the game's marks every frame; it pops up, and fades out
  * at its end */
+/* photo mode (photo.ts): the panel, a column at the right edge (Take photo first, the keys under the buttons; it
+ * scrolls on a screen too short for it), a flash at each picture, the camera's hand on the picture; the page's other
+ * things on the game hidden while it is on (its toasts stay: the picture's) */
+.stage.photo :is(.touch, .qc-lines, .qc-picker, .drift-panel, .drift-pop, .pause-hint, .notices, .lobby, .lobby-cover, .hud-fps, .stage-menu) {
+  display: none !important;
+}
+.stage.photo canvas { cursor: grab; }
+.stage.photo canvas:active { cursor: grabbing; }
+.photo-panel {
+  --pe: max(16px, env(safe-area-inset-top), env(safe-area-inset-bottom));
+  position: absolute; right: max(16px, env(safe-area-inset-right)); top: var(--pe); z-index: 5;
+  width: 240px; max-height: calc(100% - 2 * var(--pe)); overflow-y: auto; overscroll-behavior: contain;
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; align-content: start;
+  padding: 12px 14px 14px; border: 1px solid var(--line); border-radius: 10px; background: rgba(0, 0, 0, 0.78);
+  font: 400 14px/20px var(--font); color: var(--text);
+}
+.ph-head { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.ph-title { font-style: italic; font-weight: 700; text-transform: uppercase; color: var(--lime); }
+.ph-mode { display: inline-flex; border: 1px solid var(--edge); border-radius: 6px; overflow: hidden; }
+.ph-mode button { padding: 2px 10px; border: 0; background: none; color: var(--muted); cursor: pointer; }
+.ph-mode button.on { background: var(--lime-fill); color: var(--lime); }
+.ph-slider { display: flex; flex-direction: column; gap: 2px; color: var(--muted); }
+.ph-slider input { width: 100%; margin: 0; accent-color: var(--lime); }
+.ph-buttons { display: flex; flex-direction: column; gap: 8px; }
+.ph-buttons button {
+  padding: 6px 16px; border: 1px solid var(--edge); border-radius: 6px; background: var(--field);
+  font-style: italic; font-weight: 700; cursor: pointer;
+}
+.ph-buttons button:hover { border-color: var(--lime); }
+.ph-buttons .ph-shoot { order: -1; padding: 9px 16px; border-color: var(--lime); color: var(--lime); }
+.ph-hints {
+  display: flex; flex-direction: column; gap: 3px; padding-top: 8px; border-top: 1px solid var(--line);
+  color: var(--muted); font-size: 12px; line-height: 18px;
+}
+.ph-hints kbd { margin-right: 6px; padding: 0 5px; border-radius: 3px; font: 700 0.9em/1.5 var(--font); }
+@media (max-height: 480px) {
+  .photo-panel { width: 210px; gap: 6px; padding: 8px 10px 10px; }
+  .ph-buttons { gap: 6px; }
+  .ph-buttons button { padding: 4px 12px; }
+  .ph-buttons .ph-shoot { padding: 6px 12px; }
+}
+.photo-flash { position: absolute; inset: 0; z-index: 6; background: #fff; pointer-events: none; animation: photo-flash 0.35s ease-out both; }
+@keyframes photo-flash { from { opacity: 0.7; } to { opacity: 0; } }
 .qc-lines { --u: 1px; position: absolute; inset: 0; z-index: 3; overflow: hidden; pointer-events: none; }
 .qc-line { position: absolute; left: 0; top: 0; transform-origin: 0 0; white-space: nowrap; transition: opacity 0.6s linear; }
 .qc-line.out { opacity: 0; }
@@ -736,6 +815,8 @@ html:has(> body > .stage:not([hidden])) { overflow: hidden; }
 .lobby-title { font-size: 1.1em; font-weight: 700; font-style: italic; text-transform: uppercase; letter-spacing: 0.02em; color: var(--lime); }
 .lobby-sub, .lobby-hint { color: var(--muted); font-size: 0.85em; }
 .lobby-why { margin-top: 0.4em; color: var(--muted); }
+/* its host made no input lately: the seconds until the lobby closes (lobby.ts away) */
+.lobby-warn { margin-top: 0.3em; font-size: 0.85em; font-weight: 700; color: var(--warn); }
 .lobby-places { list-style: none; margin: 0.5em 0 0; padding: 0; }
 .lobby-places li { display: flex; gap: 0.6em; align-items: baseline; padding: 0.12em 0; border-top: 1px solid rgba(255, 255, 255, 0.08); }
 .lobby-places li.open { color: rgba(255, 255, 255, 0.35); font-style: italic; }
@@ -803,6 +884,21 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.64); }
 .dlg-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
 .dlg-head h2 { margin: 0; }
 .menu-actions { display: grid; gap: 8px; }
+.menu-radio { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); }
+.menu-radio .btn { padding: 0 80px; overflow: hidden; }
+.menu-radio .btn span { min-width: 0; overflow: hidden; text-overflow: ellipsis; padding-inline-end: 0.2em; }
+.menu-radio .icon { position: absolute; top: 6px; width: 28px; height: 28px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 8px; background: none; color: inherit; }
+.menu-radio .icon:hover { color: var(--lime); }
+.menu-radio [data-act="radio-folder"] { right: 40px; }
+.menu-radio [data-act="playlist"] { right: 8px; }
+.dlg.playlist { width: min(640px, calc(100vw - 32px)); }
+#playlist-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; max-height: calc(100dvh - 220px); overflow: hidden auto; }
+.track { display: flex; align-items: center; justify-content: space-between; gap: 12px; content-visibility: auto; contain-intrinsic-size: auto 44px; }
+.track > span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.track > :last-child { flex: none; }
+#playlist-shuffle { margin-bottom: 8px; }
+.track-folder { color: var(--muted); font-size: 14px; line-height: 20px; padding-top: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menu-radio svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 #menu-save { margin-top: -12px; }
 #menu-save:empty { display: none; }
 /* the menu's Crews popup (a game in free roam): the Crews row's control under the help, Done under it */
@@ -834,4 +930,5 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.64); }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
+  .photo-flash { display: none !important; }          /* no white flash at all, rather than a still one */
 }

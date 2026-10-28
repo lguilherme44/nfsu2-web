@@ -797,6 +797,9 @@ void racenet_frame(CPU *c);                   /* racenet.c: how the other player
 void mprace_frame(CPU *c);                    /* mprace.c: a multiplayer race's trip from free roam and back */
 void hornmenu_frame(CPU *c);                  /* hornmenu.c: the pause menu's Horn Volume slider's parts */
 void drift_frame(CPU *c);                     /* drift.c: drift mode in free roam (F2) */
+void photo_frame(CPU *c);                     /* photo.c: photo mode (F12, the pause menu's Photo Mode) */
+void language_texts_frame(CPU *c);            /* language.c: texts of our own in the game's language table */
+void sms_frame(CPU *c);                       /* sms.c: a text message of ours on the game's phone */
 void roam_game_hud(CPU *c);                   /* its names over friends' cars */
 int roam_game_cmd(CPU *c, const char *args, long *wait_start);
 /* the "virtual Windows friend" (roam_asipeer.c, only in out/nfsu2_asipeer):
@@ -807,7 +810,7 @@ __attribute__((weak)) int roam_asipeer_cmd(CPU *c, const char *args, long *wait_
     fprintf(stderr, "[roam] asi: not in this build (ASIPEER=1 ./link.sh orig makes out/nfsu2_asipeer)\n"); return 1; }
 int roam_hook(CPU *c, uint32_t ip){
     switch (ip){
-    case HOOK_SITE(0x00581475): mprace_frame(c); if (!roam_asipeer_frame(c)) roam_game_frame(c); racehorn_frame(c); racenet_frame(c); hornmenu_frame(c); drift_frame(c); roam_frame(c); return 1;
+    case HOOK_SITE(0x00581475): language_texts_frame(c); sms_frame(c); mprace_frame(c); if (!roam_asipeer_frame(c)) roam_game_frame(c); racehorn_frame(c); racenet_frame(c); hornmenu_frame(c); drift_frame(c); photo_frame(c); roam_frame(c); return 1;
     /* Player::Update's HUD step (0x600590), behind its call of the HUD
      * update (0x4EC5A0), where the game places its own LAN race labels */
     case HOOK_SITE(0x006005e0): roam_game_hud(c); return 1;

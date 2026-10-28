@@ -162,6 +162,7 @@ fn lobbies_on_the_wire_roam_core_and_the_hub_agree() {
     k.from(W(1), &snap(101, [0.0, 0.0, 0.0]));
     let ad = unhex(&run(&["lobby".to_string()]));
     assert_eq!(ad.len(), 16 + 24 + 8 + 4);
+    assert_eq!(ad[16 + 23], 25, "the host's away seconds in the byte after n, once reserved: the hub takes the advert all the same");
     k.from(W(0), &ad);
     k.clear();
     k.from(W(1), &mapreq(101, 1));

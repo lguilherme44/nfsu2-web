@@ -12,11 +12,13 @@ interface LobbyState {
   v?: 'spot' | 'join' | 'full' | 'lobby' | 'trip' | 'note';
   /** lobby: host (ours), asked (joining), in (joined), count (the countdown, t seconds) */
   st?: 'host' | 'asked' | 'in' | 'count';
-  kind?: string; track?: string; laps?: number;
+  /** the race; stage: its career stage */
+  kind?: string; track?: string; laps?: number; stage?: number;
   /** the lobby's players, the host first; me: our place in it (-1: none); max: its places; t: the countdown's
-   *  seconds; closes: the seconds left of a lobby nobody joined (its last minute); fee: what quitting the race costs;
-   *  even: the race evens out the cars (their engines) */
-  names?: string[]; me?: number; max?: number; t?: number; closes?: number; fee?: number; even?: number;
+   *  seconds; closes: the seconds left of a lobby nobody joined (its last minute); away: its host made no input
+   *  lately, the seconds until it closes; fee: what quitting the race costs; even: the race evens out the cars
+   *  (their engines) */
+  names?: string[]; me?: number; max?: number; t?: number; closes?: number; away?: number; fee?: number; even?: number;
   why?: string; step?: string; text?: string;
   /** trip, once the race's results came: their rows in order; prize: what ours won */
   res?: RaceResult[]; prize?: number;
@@ -38,6 +40,7 @@ const GAME_TEXT = [
   N('Multiplayer races take a car of your own: buy one in your career first'), N('You are no longer in the race'), N('The race is full'),
   N('The race is off: its host is gone'), N('The race is off: you are not in it'), N('The race could not start'), N('The race did not take you'),
   N('Everyone else left: the race waits for players again'), N('Multiplayer race: you quit it'), N('Multiplayer race: not finished'),
+  N('You seemed away: the lobby is closed'),
 ];
 const game = (s: string) => language() === 'english' || !GAME_TEXT.includes(s) ? s : t(s);
 /** a note the game sent (mp_note): its fixed ones, and the ones with a name or a number in them */
@@ -48,6 +51,7 @@ function noteText(s: string): string {
   if (e) { s = s.slice(0, e.index); engine = ' ' + t('(your engine {pct}% to even out the cars)', { pct: e[1] }); }
   const forms: [RegExp, (m: RegExpExecArray) => string][] = [
     [/^(.+) called off the race$/, m => t('{name} called off the race', { name: m[1] })],
+    [/^(.+) seemed away: the race is called off$/, m => t('{name} seemed away: the race is called off', { name: m[1] })],
     [/^The multiplayer race did not happen: (.*)$/, m => t('The multiplayer race did not happen: {why}', { why: m[1] })],
     [/^Multiplayer race: (\d+)(st|nd|rd|th) place, \$(\d+)$/, m => t('Multiplayer race: {pos} place, ${prize}', { pos: m[1] + m[2], n: m[1], prize: m[3] })],
     [/^Multiplayer race: (\d+)(st|nd|rd|th) place$/, m => t('Multiplayer race: {pos} place', { pos: m[1] + m[2], n: m[1] })],
@@ -116,7 +120,7 @@ export class LobbyPanel {
   private title(s: LobbyState, host?: string) {
     const kind = game(s.kind ?? 'race');
     const head = el('div', 'lobby-title', host ? t('{host}\'s {kind}', { host, kind }) : t('Multiplayer {kind}', { kind }));
-    const sub = [s.track, s.laps ? tn(s.laps, '{n} lap', '{n} laps') : ''].filter(Boolean).join(' · ');
+    const sub = [s.stage ? t('Stage {n}', { n: s.stage }) : '', s.track, s.laps ? tn(s.laps, '{n} lap', '{n} laps') : ''].filter(Boolean).join(' · ');
     return sub ? [head, el('div', 'lobby-sub', sub)] : [head];
   }
 
@@ -165,10 +169,14 @@ export class LobbyPanel {
         kids.push(...this.title(s, mine ? undefined : host), this.places(s, s.st === 'asked'));
         if (s.st === 'count') kids.push(el('div', 'lobby-count', t('Starting in {n}', { n: s.t ?? 0 })));
         else if (s.st === 'asked') kids.push(this.act(null, t('Joining {host}\'s {kind}…', { host, kind: game(s.kind ?? 'race') })));
-        else if (mine && names.length >= 2) kids.push(this.act('Enter', t('Start the race')), el('div', 'lobby-hint', t('Drive away to call it off')));
+        else if (mine && names.length >= 2) kids.push(this.act('Enter', t('Start the race')), s.away
+          ? el('div', 'lobby-warn', t('You seem away: the lobby closes in {n} s unless you press a key', { n: s.away }))
+          : el('div', 'lobby-hint', t('Drive away to call it off')));
         else if (mine) kids.push(this.act(null, t('Waiting for players to drive up and join…')),
           el('div', 'lobby-hint', s.closes !== undefined ? t('Closes in {n} s if nobody joins', { n: s.closes }) : t('Drive away to call it off')));
-        else kids.push(this.act(null, t('Waiting for {host} to start', { host })), el('div', 'lobby-hint', t('Drive away to leave')));
+        else kids.push(this.act(null, t('Waiting for {host} to start', { host })), s.away
+          ? el('div', 'lobby-warn', t('{host} seems away: the lobby closes in {n} s', { host, n: s.away }))
+          : el('div', 'lobby-hint', t('Drive away to leave')));
         break;
       }
       case 'note':

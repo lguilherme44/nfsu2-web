@@ -145,6 +145,9 @@ void dispatch_indirect(CPU *c, uint32_t addr);
 #define MSG_LOOK_CANCEL 0x7345710fu   /* "Looking for LAN servers ..."'s Cancel */
 #define MSG_RETRY       0x73c044ecu   /* "lost the connection ... reconnect?" Retry (the host's server not up yet) */
 #define G_SNAPSHOT      0x00851148u   /* the crib's snapshot of the profile (0: none) */
+#define G_MC_MODE       0x00836514u   /* the memory card's job (0x4A3100): & 0xf how it ends (0x4A31D0: 1 a message to the */
+#define G_MC_FROM       0x00836518u   /* package that asked, the crib's Return; 2 a switch to the next package, by name) */
+#define G_MC_NEXT       0x0083651cu
 #define G_LANSTATE      0x008500d0u   /* the LAN object's UI state: 2 the server list's, 0x11 idle, 0x12 busy */
 #define FN_LANSTATE     0x005031b0u   /* thiscall 0x850080 (state) */
 #define G_NET           0x00850080u   /* the network race's settings */
@@ -424,7 +427,10 @@ int mprace_speed_limit(uint32_t car, float mph){
  * MPRACE_BALANCE_SHARE: the slower cars come most of the way up, the
  * faster ones a little down), and for every car the engine power that takes
  * its rating MPRACE_BALANCE_CLOSE of the way to the target, in logs (of two
- * cars, one rated 1.34 times the other, 1.03 times is left), from
+ * cars, one rated 1.34 times the other, 1.03 times is left), in a drag race
+ * MPRACE_BALANCE_CLOSE_DRAG (all of it: there that edge decided, the live
+ * races of 2026-10-26: of two cars rated alike, as left 1.02 apart the better
+ * one won 76 %, 1.06 apart 84 %; in circuits and sprints 62 and 64 %), from
  * -MPRACE_BALANCE_DOWN to +MPRACE_BALANCE_UP:
  * its rating at power f is the game's sum (0x5B4DC0) with the push f times
  * as strong (the push is the torque's; the rating goes as about f^1.16 for
@@ -439,7 +445,7 @@ int mprace_speed_limit(uint32_t car, float mph){
  * Only in the race types that the rating decides (drag, sprint,
  * circuit, URL): in Street X and drift races the better-rated cars placed
  * like the others (the live server's lines of 2026-10-23).
- * NFSU2_MPRACE_BALANCE (a test aid): "UP,DOWN,SHARE,CLOSE" instead, 0 none. */
+ * NFSU2_MPRACE_BALANCE (a test aid): "UP,DOWN,SHARE,CLOSE,CLOSE_DRAG" instead, 0 none. */
 static float rating_at(uint32_t pi, float f){
     uint32_t t = pi + PI_PUSH; float m = MRF32(pi + PI_MASS), k = MRF32(pi + PI_DRAG), sum = 0.f;
     if (!(m > 0.f)) return 0.f;
@@ -450,20 +456,23 @@ static float rating_at(uint32_t pi, float f){
     }
     return sum;
 }
-typedef struct { float up, down, share, close; int on; } Balance;
+typedef struct { float up, down, share, close, close_drag; int on; } Balance;
 static Balance balance_conf(void){
     static Balance b; static int got;
     if (!got){
         const char *e = getenv("NFSU2_MPRACE_BALANCE");
-        b.up = MPRACE_BALANCE_UP; b.down = MPRACE_BALANCE_DOWN; b.share = MPRACE_BALANCE_SHARE; b.close = MPRACE_BALANCE_CLOSE; b.on = 1;
+        b.up = MPRACE_BALANCE_UP; b.down = MPRACE_BALANCE_DOWN; b.share = MPRACE_BALANCE_SHARE; b.close = MPRACE_BALANCE_CLOSE;
+        b.close_drag = MPRACE_BALANCE_CLOSE_DRAG; b.on = 1;
         if (e && *e){
-            float u = 0.f, d = 0.f, s = b.share, c = b.close;
-            int n = sscanf(e, "%f,%f,%f,%f", &u, &d, &s, &c);
+            float u = 0.f, d = 0.f, s = b.share, c = b.close, cd = b.close_drag;
+            int n = sscanf(e, "%f,%f,%f,%f,%f", &u, &d, &s, &c, &cd);
             if (n < 2 || !(u > 0.f || d > 0.f)) b.on = 0;
-            else { b.up = u; b.down = d; b.share = s; b.close = c; }
+            else { b.up = u; b.down = d; b.share = s; b.close = c; b.close_drag = cd; }
         }
         if (!(b.close >= 0.f)) b.close = 0.f;
         if (b.close > 1.f) b.close = 1.f;
+        if (!(b.close_drag >= 0.f)) b.close_drag = 0.f;
+        if (b.close_drag > 1.f) b.close_drag = 1.f;
         if (!(b.up >= 0.f)) b.up = 0.f;
         if (b.up > 2.f) b.up = 2.f;
         if (!(b.down >= 0.f)) b.down = 0.f;
@@ -497,24 +506,33 @@ static int race_cars(uint32_t *car, uint32_t *pi, int *n){
     return all;
 }
 /* the cars as evened out: each one's car, its power, and the curve's first point as left (a rebuilt info has
- * its own again) */
-static struct { int n; uint32_t car[RACE_CARS_MAX]; float f[RACE_CARS_MAX], t0[RACE_CARS_MAX]; long check_at; } g_bal;
+ * its own again); the car's first word (its class), to know it again */
+static struct { int n; uint32_t car[RACE_CARS_MAX], vt[RACE_CARS_MAX]; float f[RACE_CARS_MAX], t0[RACE_CARS_MAX]; long check_at; } g_bal;
 static void balance_apply(int i){
     uint32_t pi = perf_info(g_bal.car[i]);
     if (!pi) return;
     if (g_bal.f[i] != 1.f) mprace_torque_scale(g_bal.car[i], g_bal.f[i]);
     MRF32(pi + PI_LIMIT_MPH) = 0.f;
     g_bal.t0[i] = MRF32(pi + PI_TORQUE);
+    g_bal.vt[i] = MR32(g_bal.car[i]);
 }
 /* in the race, every second: a car whose info was built again (its curve is not as left) gets its power and
- * no governor again */
+ * no governor again.  Only while the race's world is up, and only a car still among its racers, the same one:
+ * once the results' Continue unloads the world its cars are freed and the front end's screens get their memory,
+ * and the power written there broke a screen (its free of a script's tracks, no heap block, when UI_OLMain came
+ * on the way back: error 134, 2026-10-26) */
 static void balance_hold(long f){
     if (!g_bal.n || f < g_bal.check_at) return;
+    if (rd(G_FLOW) != 6u || !(rd(G_GAMEMODE) & 0x200u)){ g_bal.n = 0; mlog("balance: the race's world is gone, its cars let go%s", ""); return; }
     g_bal.check_at = f + 60;
+    uint32_t car[RACE_CARS_MAX], pis[RACE_CARS_MAX]; int n;
+    race_cars(car, pis, &n);
     for (int i = 0; i < g_bal.n; i++){
-        uint32_t pi = perf_info(g_bal.car[i]);
+        int in = 0;
+        for (int k = 0; k < n; k++) in |= car[k] == g_bal.car[i];
+        uint32_t pi = in && rd(g_bal.car[i]) == g_bal.vt[i] ? perf_info(g_bal.car[i]) : 0;
         if (!pi || (MRF32(pi + PI_TORQUE) == g_bal.t0[i] && MRF32(pi + PI_LIMIT_MPH) == 0.f)) continue;
-        fprintf(stderr, "[mprace] f=%ld balance: racer %d's car was built again (curve %.4f, not %.4f): power x%.3f again\n", f, i,
+        fprintf(stderr, "[mprace] f=%ld balance: racer %d's car was built again (curve %.4f, not %.4f): power x%.3f again\n", autotest_frame(), i,
                 (double)MRF32(pi + PI_TORQUE), (double)g_bal.t0[i], (double)g_bal.f[i]);
         balance_apply(i);
     }
@@ -535,9 +553,9 @@ static float balance_race(uint32_t ours, int mode){
     fprintf(stderr, "[mprace] f=%ld the race's Catch Up option: %u\n", autotest_frame(), rd(G_CATCHUP));
     const char *no = !b.on ? "off" : !balanced_mode(mode) ? "not in this race type" : k < 2 ? "fewer than 2 rated cars" : 0;
     if (no){ fprintf(stderr, "[mprace] f=%ld balance: %s\n", autotest_frame(), no); return 1.f; }
-    float target = expf((1.f - b.share) * logs / (float)k + b.share * logf(best));
+    float target = expf((1.f - b.share) * logs / (float)k + b.share * logf(best)), close = mode == 2 ? b.close_drag : b.close;
     fprintf(stderr, "[mprace] f=%ld balance: %d cars, their target rating %.1f (best %.1f; %.0f %% of each car's way there; power +%.0f %% "
-            "to -%.0f %%)\n", autotest_frame(), k, (double)target, (double)best, (double)(b.close * 100.f), (double)(b.up * 100.f),
+            "to -%.0f %%)\n", autotest_frame(), k, (double)target, (double)best, (double)(close * 100.f), (double)(b.up * 100.f),
             (double)(b.down * 100.f));
     for (int i = 0; i < n; i++){
         if (!(r[i] > 0.f)) continue;
@@ -545,7 +563,7 @@ static float balance_race(uint32_t ours, int mode){
          * be the game's rating: in a drag race every car has 95 % of its mass, and the push and drag per kg are
          * 1/0.95 of the rating's (the live races of 2026-10-23: every drag car's power 0.957 of what it should have
          * been), so each car's goal is put in its own sum's terms) */
-        float goal = r[i] * powf(target / r[i], b.close), was = rating_at(pi[i], 1.f), want = was > 0.f ? goal * was / r[i] : goal;
+        float goal = r[i] * powf(target / r[i], close), was = rating_at(pi[i], 1.f), want = was > 0.f ? goal * was / r[i] : goal;
         float f = balance_factor(pi[i], want, 1.f - b.down, 1.f + b.up), now = was > 0.f ? rating_at(pi[i], f) * r[i] / was : 0.f;
         float lim = MRF32(pi[i] + PI_LIMIT_MPH), n2o = MRF32(pi[i] + PI_NITROUS);
         int j = g_bal.n++;
@@ -557,7 +575,7 @@ static float balance_race(uint32_t ours, int mode){
                 "-> none, nitrous %.3f -> %.3f kN m\n", i, car[i] == ours ? " (ours)" : "", p.name, (double)r[i], (double)was, (double)goal,
                 (double)f, (double)(p.power / 1000.f), (double)now, (double)lim, (double)n2o, (double)MRF32(pi[i] + PI_NITROUS));
     }
-    g_bal.check_at = autotest_frame() + 60;
+    g_bal.check_at = clk() + 60;                                               /* (balance_hold's clock) */
     return our_f;
 }
 /* (test aid) the car's numbers for working out by hand: rating, mass, drag, speed limit, the engine's curves
@@ -1111,6 +1129,9 @@ static void step_back(CPU *c, long f){
     for (int i = 0; i < 5; i++) if (on(lan_screens[i])){ if (act_ok(lan_screens[i], f)){ autotest_tap(K_ESC, 6); acted(f); } return; }
     if (on("UI_Main.fng")){
         if (!act_ok("UI_Main.fng", f)) return;
+        /* the main menu again after the crib's Return to Explore (its save went there instead, unsaved: a 2026-10-27
+         * report, the host's server gone on the way back): the career once more, until the way back's time is up */
+        if (M.crib_go){ M.resumed = M.crib_go = 0; mlog("the main menu after the crib: the career again%s", ""); }
         uint32_t a[3] = { S_MAIN, gstr_tmp(c, "UI_StartCareer.fng"), 0 };
         call(c, FN_FE_SWITCH, 0, 3, a);
         M.career = 1; acted(f);
@@ -1135,7 +1156,14 @@ static void step_back(CPU *c, long f){
         M.next = f + SETTLE;
         return;
     }
-    if (on("MC_Main.fng")){ keys("LR"); M.next = f + 90; return; }               /* the autosave's prompts: yes / OK */
+    if (on("MC_Main.fng")){                                                      /* the autosave's prompts: yes / OK */
+        uint32_t mode = rd(G_MC_MODE), next = rd(G_MC_NEXT);
+        char nm[40] = "";
+        if ((mode & 0xfu) == 2u && okm(next, sizeof nm)) for (unsigned i = 0; i + 1 < sizeof nm && MR8(next + i); i++){ nm[i] = (char)MR8(next + i); nm[i + 1] = 0; }
+        fprintf(stderr, "[mprace] f=%ld the save: mode 0x%x, from 0x%x, next 0x%x%s%s; dialog %u, top %s\n", autotest_frame(), mode,
+                rd(G_MC_FROM), next, nm[0] ? " " : "", nm, rd(G_DLG), autotest_top_fng() ? autotest_top_fng() : "?");
+        keys("LR"); M.next = f + 90; return;
+    }
 }
 
 /* a guest string (scratch, up to 8 of them alive) */

@@ -85,8 +85,9 @@ export function checkIsolation(): Check {
  * browser's own setting or address to type where there is one.  Chrome's own list of causes
  * (developer.chrome.com/docs/web-platform/webgpu/troubleshooting-tips) and where each browser
  * has WebGPU on (github.com/gpuweb/gpuweb/wiki/Implementation-Status) decide the cases.
+ * lostBefore: the last game stopped because its graphics went (GPU-LOST).
  */
-export async function checkGpu(): Promise<Check & { adapter?: string }> {
+export async function checkGpu(lostBefore = false): Promise<Check & { adapter?: string }> {
   const label = N('Graphics (WebGPU)');
   const gpu = (navigator as any).gpu as GPU | undefined;
   const ua = navigator.userAgent;
@@ -110,11 +111,20 @@ export async function checkGpu(): Promise<Check & { adapter?: string }> {
   let ad: GPUAdapter | null = null;
   try { ad = await gpu.requestAdapter({ powerPreference: 'high-performance' }); } catch { /* reported below */ }
   if (!ad) {
+    // the graphics went during the last game, and the reloaded page gets no adapter: the browser keeps them off for a
+    // while, not graphics too old (two players' Intel Iris Xe, a hung Direct3D 12 device, then GPU-ADAPTER-WIN in Chrome
+    // and Brave).  Chrome blocks a site whose graphics hung from them for two minutes (gpu_data_manager_impl_private.cc,
+    // kBlockedDomainExpirationPeriod); the page asks again until they are back (shell.ts recheckGpu)
+    if (lostBefore) {
+      const b = browserName();
+      return fail(N('The graphics stopped during your last game, and {browser} has not given them back to this page yet. The page checks again every 10 seconds: wait a minute or two. If Play stays off, close {browser} completely (every window) and open it again. If the graphics stop again, update the graphics driver (from Intel, AMD or NVIDIA).'), 'GPU-ADAPTER-AFTER-LOST', { browser: b });
+    }
     // Firefox has one list of graphics drivers it leaves out, and on Windows, as Chrome, Direct3D 12 only
     if (ff) return fail(N('Firefox will not use this computer\'s graphics for the game. The graphics or their driver may be too old: update the graphics driver, or try Chrome. about:support, Graphics, says why.'), 'GPU-ADAPTER-FIREFOX');
     if (chromium) {
-      // Chrome 121: Android 12 and newer, on some graphics chips (Samsung's Xclipse not yet)
-      if (android) return fail(N('Chrome cannot use the graphics of this phone or tablet yet: it needs Android 12 or newer, and not every graphics chip is supported. Update Android and Chrome; otherwise the game cannot run on this device for now.'), 'GPU-ADAPTER-ANDROID');
+      // Chrome 121: Android 12 and newer, on some graphics chips; the unsafe flag lifts its blocklist (Samsung's
+      // Xclipse runs the game with it)
+      if (android) return fail(N('Chrome cannot use the graphics of this phone or tablet yet: it needs Android 12 or newer, and not every graphics chip is supported. Update Android and Chrome. If that does not help, turn on chrome://flags/#enable-unsafe-webgpu (type it into the address bar), then restart Chrome: on some phones, such as Samsungs with Xclipse graphics, the game then runs.'), 'GPU-ADAPTER-ANDROID');
       // graphics acceleration off in Chrome's settings (or graphics it uses for nothing): WebGL draws in software, or not at all
       const gl = webglRenderer();
       if (gl === null || /SwiftShader|llvmpipe|softpipe|Basic Render/i.test(gl))

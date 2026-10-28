@@ -368,9 +368,9 @@ static const char *const k_template =
 "# work.  Cutscenes stay at 30 fps in every mode.  [NFSU2_FPS]\n"
 "#fps = auto\n"
 "# Fixes for subsystems that count frames: default (all above 60 fps, none\n"
-"# at 60, ticks,particles,rain at 30), all, none, or a list of\n"
-"# ticks,timer,particles,trail,audio,rtf,rain (a leading '-' removes one,\n"
-"# e.g. default,-audio).  [NFSU2_HFR_FIX]\n"
+"# at 60, ticks,particles,rain,spinners at 30), all, none, or a list of\n"
+"# ticks,timer,particles,trail,audio,rtf,rain,spinners (a leading '-' removes\n"
+"# one, e.g. default,-audio).  [NFSU2_HFR_FIX]\n"
 "#hfr_fixes = default\n"
 "# Length factor of the NOS / streak trail.  [NFSU2_NOS_TRAIL_LEN]\n"
 "#nos_trail_length = 1.0\n"
@@ -640,7 +640,7 @@ static int value_ok(int kind, const char *v){
                   const char *h0 = e + 1; long h = strtol(h0, &e, 10);
                   return e != h0 && !*e && w >= 320 && w <= 16384 && h >= 320 && h <= 16384; }
     case K_FIXES: { static const char *const w[] = { "default", "all", "none", "ticks", "timer", "particles",
-                                                     "trail", "audio", "rtf", "rain", 0 };
+                                                     "trail", "audio", "rtf", "rain", "spinners", 0 };
                     return list_ok(v, w, 1); }
     case K_IFNAME: { size_t n = strlen(v); if (!n || n > 15) return 0;
                      for (const char *p = v; *p; p++) if (!isalnum((unsigned char)*p)) return 0;

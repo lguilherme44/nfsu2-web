@@ -224,6 +224,8 @@ fn pieces() -> Vec<&'static str> {
         "mustafa", "gs", "raccoon", "spice", "spicy", "niger", "pakize", "pakistan", "xx", "gamer", "a", "g", "dani", "hakan", "van",
         "tycoon", "trigger", "ibrahim", "99", "1995", "69", "42",
     ]);
+    // the neo-Nazi code and other numbers, names with the new words' letters in them
+    p.extend(["1488", "88", "spider", "shinigami", "zuniga", "adolf"]);
     p
 }
 

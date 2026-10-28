@@ -11,6 +11,13 @@
 //   ring   the main menu with two pump stalls (tests/scripts/audio_ring.txt):
 //          an underrun raises the ring target, 20 s without one bring it back to
 //          the start, and an underrun at a size a lowering left keeps the size before it
+//   burst  the main menu (tests/scripts/audio_burst.txt) with a 90 ms output
+//          buffer (audio_latency 90; base latency 92.9 ms here), so the worklet
+//          renders ~60 quanta back to back every ~185 ms, as Chrome does on some
+//          Android phones (base latency 87 ms in a 2026-10-25 report): the output
+//          never falls back to the wall clock, from 10 s on no quantum underruns,
+//          and the paced pump leaves the game's writer no more behind than a
+//          desktop does (at most 2 skips; 178 when it refilled a burst at once)
 import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -35,9 +42,9 @@ const browser = await chromium.launch({ channel: 'chrome', headless: !process.ar
     ...(process.env.CHROME_ARGS ? process.env.CHROME_ARGS.split(' ') : [])] });
 
 // Play with this input script; the page log once the game ended (exit code, lines without the [tid] prefix)
-async function play(step, script, ms) {
+async function play(step, script, ms, env = []) {
   const q = new URLSearchParams({ reg: '/tests/web/seed/registry_perf4_native.txt', save: `${RUN}-${step}`, script });
-  for (const e of ['NFSU2_ROAM=0', 'NFSFULL=0', 'NFSU2_AUDIO_STATUS=5', 'NFSU2_TIMEOUT=400']) q.append('env', e);
+  for (const e of ['NFSU2_ROAM=0', 'NFSFULL=0', 'NFSU2_AUDIO_STATUS=5', 'NFSU2_TIMEOUT=400', ...env]) q.append('env', e);
   const page = await (await browser.newContext({ viewport: { width: 1280, height: 800 } })).newPage();
   page.on('pageerror', e => console.log(`  ${step} PAGEERROR ${e}`));
   await page.goto(`${BASE}/?${q}&fresh`);
@@ -88,6 +95,24 @@ if (!ONLY || ONLY.has('ring')) {
   const ok = r.end === 'exited' && r.code === 0 && back && floor === start + 512 && of(2, 'up').length > 0 && held && last === floor;
   report('ring', ok, `${r.end}, exit ${r.code}; start ${start}, at the end ${last}; ` +
     [1, 2].map(p => `stall ${p}: ${ev.filter(e => e.phase === p).map(e => `${e.kind} ${e.to}`).join(', ') || 'nothing'}`).join('; '));
+}
+
+if (!ONLY || ONLY.has('burst')) {
+  const r = await play('burst', '/tests/scripts/audio_burst.txt', 300000, ['NFSU2_AUDIO_LATENCY=90']);
+  const lat = num(/worklet attached: (\d+) Hz, base latency ([\d.]+) ms/, r.lines);
+  const clock = num(/sound clock backup: ([\d.]+) s on the ring, ([\d.]+) s on the wall clock \(no output\), (\d+) times ring->wall/, r.lines);
+  const end = num(/sound output path : AudioWorklet ring, \d+-frame slices, target (\d+) frames .*?(\d+) underruns.* its bursts (\d+) ms apart, a ring of (\d+) frames/, r.lines);
+  const ahead = num(/sound write-ahead : .*; (\d+) slices mixed before the game wrote them, in (\d+) skips/, r.lines);
+  // underruns so far at the first status line from 10 s on
+  const at10 = r.lines.map(l => /\[audio\] t=([\d.]+)s .* target=(\d+) .* underruns=(\d+)/.exec(l)).find(m => m && +m[1] >= 10);
+  const late = end && at10 ? end[1] - +at10[3] : null;
+  const ok = r.end === 'exited' && r.code === 0 && lat && +lat[1] >= 60 && clock && clock[2] === 0 && late === 0 &&
+    end[3] === 16384 && ahead && ahead[1] <= 2;
+  report('burst', ok, `${r.end}, exit ${r.code}; ` + (lat ? `context base latency ${lat[1]} ms; ` : 'no worklet line; ') +
+    (clock ? `${clock[0]} s on the ring, ${clock[1]} s on the wall clock, ${clock[2]} times ring->wall; ` : 'no clock line; ') +
+    (end ? `bursts ${end[2]} ms apart, ring ${end[3]} frames, target ${end[0]} frames at the end, ${end[1]} underruns` : 'no ring line') +
+    (at10 ? ` (${at10[3]} by ${at10[1]} s, target ${at10[2]} then)` : '; no status line at 10 s') +
+    (ahead ? `; ${ahead[1]} skips (${ahead[0]} slices mixed before the game wrote them)` : '; no write-ahead line'));
 }
 
 await browser.close();

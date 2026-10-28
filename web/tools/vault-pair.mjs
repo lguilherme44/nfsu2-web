@@ -8,7 +8,8 @@
 // the device's own (B keeps its registry.txt and its resolution scale and frame rate in settings.ini); A's resolution
 // scale changed sends nothing; a settings.ini changed in A comes to B, a cover B has of its own and B's scale staying;
 // a rename in A comes to B at its next page
-// load; both rename (a conflict: B keeps its own, A takes it at its next load); A deletes the saves from the server
+// load; a send of A's the server kept without A hearing back is no conflict at A's next send (issue 33); both rename
+// (a conflict, both sides shown: B keeps its own when asked, A takes it at its next load); A deletes the saves from the server
 // and B is told at its next load.  The profile's bytes are
 // compared between the two, B's screenshot must stay throughout.  --state: the server's state folder as this machine
 // reads it (\\wsl.localhost\... from Windows): exactly one keyphrase file in its vault folder, which holds neither the
@@ -189,14 +190,28 @@ try {
   check(!(await profiles(b)).includes(name), 'B took A\'s rename');
   check(!!(await fileHash(b, 'nfsu2000.tga')), 'B\'s screenshot stayed after the sync');
 
-  // both rename: a conflict in B, which keeps its own; A takes it at its next load
+  // A's send kept by the server but its answer lost (issue 33): its next send is no conflict
+  await a.route('**/vault', async r => { if (r.request().method() !== 'PUT') return r.continue(); await r.fetch(); await r.abort('failed'); });
+  await rename(a, 'RENAMED', 'LOSTA');
+  await until('A did not hear back', async () => /^Sync failed/.test(await status(a)), 30000);
+  await a.unroute('**/vault');
+  await rename(a, 'LOSTA', 'RENAMED');
+  await until('A synced or not', async () => (await synced(a)) || /Keep which/.test(await status(a)), 30000);
+  check(await synced(a) && !(await link(a)).sent, `A's own unanswered send is no conflict: "${await status(a)}"`);
+  await open(b);
+  await until('B took it', async () => (await profiles(b)).includes('RENAMED') && await synced(b));
+
+  // both rename: a conflict in B, both sides shown, which keeps its own when asked; A takes it at its next load
   const rev1 = (await link(a)).rev;
   await rename(a, 'RENAMED', 'FROMA');
   await until('A sent its rename', async () => (await link(a))?.rev !== rev1);
   await rename(b, 'RENAMED', 'FROMB');
   await b.waitForSelector('#vault-conflict:not([hidden])', { timeout: 20000 });
   check(/^Changed here and in another browser/.test(await status(b)), `B sees the conflict: "${await status(b)}"`);
+  const sides = await b.locator('#vault-sides').innerText();
+  check(/This browser[\s\S]*FROMB \$[\s\S]*Cloud[\s\S]*FROMA \$/.test(sides), `B shows both sides: ${JSON.stringify(sides)}`);
   await b.click('#vault-mine');
+  await confirmOk(b);
   await until('B synced again', async () => synced(b));
   await open(a);
   await until('B\'s rename in A', async () => (await profiles(a)).includes('FROMB'));

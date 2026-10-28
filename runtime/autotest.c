@@ -62,6 +62,8 @@
  *     wzero [now]              world-time origin for absolute Nwms lines: the
  *                              start of the current race (GameFlow 6) when
  *                              racing, else (or with "now") the current time
+ *     photo WHAT [ARGS]        photo mode as the page drives it (photo.c
+ *                              photo_script: on, off, orbit, free, turn X Y ...)
  *     headlights MODE          the other cars' headlights (headlights.c): its
  *                              NFSU2_HEADLIGHTS modes, for an A/B in one run
  *     displayhz HZ             act as if the window moved to a screen with
@@ -232,7 +234,7 @@ enum { C_DOWN, C_UP, C_TAP, C_TYPE, C_DUMP, C_WAITMEM, C_LOG, C_QUIT, C_PEEK, C_
        C_NSDOWN, C_NSUP, C_NSTAP, C_NSREPEAT, C_NSTYPE, C_NSFOCUS, C_NSMOUSE, C_NSTAPUNTIL,
        C_LOOP, C_ENDLOOP, C_STATUS, C_STALL, C_CAREER,
        C_COVRESET, C_COVDUMP, C_TRACE, C_UNTRACE, C_EXPECT, C_WAITEXPR, C_MARK, C_EDGE, C_ROAM,
-       C_SRVCYCLE, C_CLICK };
+       C_SRVCYCLE, C_CLICK, C_PHOTO };
 /* roam.c: free-roam multiplayer research probes ("roam <sub> ...") */
 int roam_cmd(CPU *c, const char *line, long *wait_start);
 #define PAD_PLUG 0xFFFFu           /* C_PAD: "pad connect|disconnect" */
@@ -377,6 +379,7 @@ static void load_script(const char *path){
         else if (!strcasecmp(cmd, "srvcycle")) { e.cmd = C_SRVCYCLE; e.n = a1[0] ? atol(a1) : 1; e.val = a2[0] ? (uint32_t)atol(a2) : 0u; }
         else if (!strcasecmp(cmd, "texrep")) { e.cmd = C_TEXREP; e.n = !strcasecmp(a1, "off") ? 0 : !strcasecmp(a1, "on") ? 1 : -1; }
         else if (!strcasecmp(cmd, "headlights")) { e.cmd = C_HEADLIGHTS; snprintf(e.text, sizeof e.text, "%s", a1); }
+        else if (!strcasecmp(cmd, "photo")) { e.cmd = C_PHOTO; snprintf(e.text, sizeof e.text, "%s", rest); }
         else if (!strcasecmp(cmd, "waitfng")){ e.cmd = C_WAITFNG;
             snprintf(e.text, sizeof e.text, "%s", a1); e.n = a2[0] ? atol(a2) : 0; }
         else if (!strcasecmp(cmd, "tapuntil")){ e.cmd = C_TAPUNTIL;
@@ -715,6 +718,10 @@ static int fire(CPU *c, Ev *e, double tms){
         g_wzero = (!e->n && rs >= 0) ? rs : hfr_sim_ms();
         fprintf(stderr, "[autotest] f=%ld t=%.0fms world-time origin at w=%.3fms (now w=%.3fms)\n",
                 g_frame, tms, g_wzero, hfr_sim_ms());
+        break; }
+    case C_PHOTO: {        /* "photo ...": photo mode as the page drives it (photo.c photo_script) */
+        int photo_script(const char *s);
+        fprintf(stderr, "[autotest] f=%ld t=%.0fms photo %s%s\n", g_frame, tms, e->text, photo_script(e->text) ? "" : " (not known)");
         break; }
     case C_HEADLIGHTS: {   /* "headlights MODE": the other cars' headlights (headlights.c), A/B in one run */
         int headlights_set(const char *mode);

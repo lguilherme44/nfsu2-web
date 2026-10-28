@@ -10,6 +10,9 @@
 // server down: a failed request, a 5xx from a proxy in front of it, or no
 // answer to the page within NAV_WAIT_MS), the copies answer, and for
 // OFFLINE_MS after that they answer first, so one start uses one set of them.
+// An answer from the server in that time does not end it: the page's script
+// from a copy beside /game.json from the server would be two versions, whose
+// renderer and module do not fit (a start that failed so, 2026-10-25).
 // A page that finds the server again and reloads for its newer version (a
 // deploy restarts the server, so its players' pages may start from the copies:
 // shell.ts) says so first ('online'): that start is the server's.  After every start page that came from the server, the files it loads only
@@ -87,7 +90,6 @@ async function answer(e: FetchEvent, key: string): Promise<Response> {
       if (!res) e.waitUntil(net.then(r => keep(cache, key, r, kept)).catch(() => {}));
       return kept!;
     }
-    offlineUntil = 0;
     e.waitUntil((async () => {
       await keep(cache, key, res.clone(), kept);
       if (key === PAGE) await refresh(cache, [...LATER, ...(await cache.keys()).map(r => new URL(r.url).pathname).filter(p => LANG.test(p))]);

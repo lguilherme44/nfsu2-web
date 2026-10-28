@@ -17,7 +17,10 @@
 # each: no half-written file is ever served), makes them readable for the container (644), sets NFSU2_IMAGE in .env,
 # restarts only the server at once (`docker compose up -d server`: cloudflared and the rest stay up), and waits
 # until it is healthy with the new module.  Everyone in the game is cut off for a few seconds and reconnects; pages
-# notice the new module by its ETag.
+# notice the new module by its ETag.  Last, module/release.json names the module's commit and the running image's,
+# for the forum bot (discord-bot/repo.mjs): after a release of only the page or the server, the image's commit is
+# what is live, though nfsu2.json still names the module's.  A try again of a release whose server is up already
+# restarts nothing and only writes that file.
 #
 #   NFSU2_DIR    the folder on the VPS (default /srv/nfsu2)
 #   NFSU2_REPO   the image without its tag (default ghcr.io/th0mk/nfsu2-web-rs)
@@ -78,6 +81,16 @@ done
 [ "$st" = healthy ] || { echo "release: not healthy after 3 minutes: docker compose logs server" >&2; exit 1; }
 label=$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$(docker compose ps -q server)" 2>/dev/null || true)
 say "healthy: module $rev, image ${label:0:7}"
+# what is live, for the forum bot: the image's commit from its label, else from its sha- tag
+image=${label:0:7}
+[ -n "$image" ] || image=$(echo "$img" | sed -n 's/.*:sha-\([0-9a-f]*\)$/\1/p')
+if [ -n "$image" ]; then
+  printf '{"module":"%s","image":"%s"}\n' "$rev" "$image" > module/release.json.new
+  chmod 644 module/release.json.new
+  mv -f module/release.json.new module/release.json
+else
+  rm -f module/release.json
+fi
 REMOTE
 )
 
@@ -100,6 +113,10 @@ have=$(wc -c < "$src/nfsu2.wasm" | tr -d ' ')
 
 # the image: its tag in the registry (a commit's image is missing when CI cancelled it for a newer push)
 commit="${3:-$rev}"
+# another commit's image: one after the module's, as the forum bot will take it (release.json)
+if [ "${commit:0:7}" != "${rev:0:7}" ] && git cat-file -e "$commit^{commit}" 2>/dev/null && git cat-file -e "$rev^{commit}" 2>/dev/null; then
+  git merge-base --is-ancestor "$rev" "$commit" || die "$commit does not come after the module's commit $rev"
+fi
 img="$repo:sha-${commit:0:7}"
 reg="${repo%%/*}" path="${repo#*/}"
 tok=$(curl -fsS "https://$reg/token?scope=repository:$path:pull" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p') || die "the registry $reg did not answer"
